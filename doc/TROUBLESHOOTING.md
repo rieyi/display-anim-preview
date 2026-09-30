@@ -1,4 +1,7 @@
-# Troubleshooting · 排查
+# Java Display Animator — Troubleshooting
+
+For version 1.1.0. See the [overview](../README.md), [usage guide](USAGE.md),
+or [Chinese troubleshooting](TROUBLESHOOTING.zh-CN.md).
 
 ## FAQ
 

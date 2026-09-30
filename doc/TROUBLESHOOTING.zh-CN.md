@@ -1,4 +1,7 @@
-# 排查 · Troubleshooting
+# Java 逐帧显示动画故障排查
+
+本文对应 1.1.0。请参阅[中文介绍](../README.zh-CN.md)、[使用教程](USAGE.zh-CN.md)
+或 [English troubleshooting](TROUBLESHOOTING.md)。
 
 ## 常见问题
 

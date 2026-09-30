@@ -1,6 +1,7 @@
-# Usage · 用法
+# Java Display Animator — Usage
 
-Full walkthrough for Java Display Animator. For the short overview, see [README.md](../README.md).
+Full walkthrough for Java Display Animator 1.1.0. See the [overview](../README.md),
+[Chinese guide](USAGE.zh-CN.md), or [troubleshooting](TROUBLESHOOTING.md).
 
 ## Steps
 
@@ -9,8 +10,7 @@ Full walkthrough for Java Display Animator. For the short overview, see [README.
 1. Select **File → New → Java Display Animation**.
 2. Create the item geometry, groups, and textures.
 3. Create one or more group animations in Blockbench's **Animate** mode. The preview panel continues
-   to play the currently selected single animation; choose the animations to export in the separate
-   export list.
+   to play the currently selected single animation; choose the animations to export in Project Settings.
 4. Set a project animation rate from 1 to 20 FPS. It controls preview, export sampling, bounds checks, and in-game playback.
 
 The format uses Minecraft's non-centered item-model grid. Do not convert the project to a centered
@@ -70,14 +70,14 @@ name, generated key, and local frame. Inspect it in Minecraft with
 
 ### 6. Export the resource pack and datapack
 
-1. Run **Export Resource Pack and Datapack** from the Command Palette.
-2. On the first page, select the animations to export from the persistent checklist. Each row shows
-   the original name, generated key, duration, source FPS, and 20 FPS output-frame count. **Select
-   All** and **Select None** are also available. For example, `TPS Reload` becomes `tps_reload`.
+1. Run **Java Display Animator Project Settings** from the Command Palette. The sidebar pages
+   configure general information, animations, pack locations, datapack settings, and developer APIs.
+2. On the **Animations** page, select the animations to export and review the generated Minecraft
+   keys. **Select All** and **Select None** are available. For example, `TPS Reload` becomes `tps_reload`.
 3. Select at least one animation. An empty key, `.` or `..`, or a key collision after sanitization
    prevents export until the conflicting animations are renamed.
-4. On the second page, select the default animation from the checked animations. Static display
-   contexts and invalid animation keys use frame 0 of this animation.
+4. On the same page, select a default animation from the checked tracks and choose the project FPS
+   from 1 to 20. Static display contexts and invalid item animation keys use frame 0 of the default.
 5. Choose an output mode:
    - Resource Pack + Datapack under one shared root;
    - Resource Pack + Datapack under separate parent folders;
@@ -89,7 +89,9 @@ name, generated key, and local frame. Inspect it in Minecraft with
    unpacked pack containing a valid `pack.mcmeta`, which is preserved.
 8. The animation page can enable or disable **Run exact bounds check before export**. Resource models
    are isolated in a disposable project either way; disabling it suppresses range warnings and status.
-9. If frame-rate, texture-resolution, or enabled model-bounds issues exist, the plugin combines every
+9. Close Project Settings and run **Export Resource Pack and Datapack**. The exporter reads the
+   saved settings instead of asking you to select animations again. If frame-rate, texture-resolution,
+   or enabled model-bounds issues exist, the plugin combines every
    warning into one dialog. Files are generated only after **Export Anyway** is selected. Cancelling
    or closing the dialog writes nothing and displays an explicit cancellation message.
 
@@ -171,3 +173,9 @@ clamps the requested frame to the selected animation's valid range. Version 1.1.
 Check GUI, first person, third person, ground, head, and item-frame views. Only display contexts whose
 animation switch is enabled should change frames. Also test switching, looping, one-shot reset, and
 manual frame selection with at least two animations of different lengths.
+
+## Version compatibility
+
+In principle, item-model mapping makes the approach applicable to other Minecraft Java versions.
+Minecraft Java 26.2 is the tested stable target; 1.1.0 emits its resource-pack and datapack formats.
+Using another version may require adapting metadata, routing, components, and commands.
