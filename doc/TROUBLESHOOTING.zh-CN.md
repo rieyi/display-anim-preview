@@ -1,6 +1,6 @@
 # Java 逐帧显示动画故障排查
 
-本文对应 1.1.0。请参阅[中文介绍](../README.zh-CN.md)、[使用教程](USAGE.zh-CN.md)
+本文对应 1.1.2。请参阅[中文介绍](../README.zh-CN.md)、[使用教程](USAGE.zh-CN.md)
 或 [English troubleshooting](TROUBLESHOOTING.md)。
 
 ## 常见问题
@@ -33,3 +33,7 @@
 - 确认 key 与导出完成窗口一致。`play` 中的无效 key 会报错并拒绝新请求；只有物品数据中
   缺失或无效的 `strings[0]` 才会由资源模型回退到默认动画路由。
 - 确认物品使用了生成的 `minecraft:item_model` 组件。
+
+## 手臂显示为玩家头部贴图
+
+关闭光影，启用本插件生成的资源包，按 F3+T 重载，再检查左右第一人称。不能保证与其他核心着色器或其他 Minecraft 版本兼容。

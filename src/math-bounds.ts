@@ -1,4 +1,4 @@
-/** 用于快速交互检查、不会修改工程的矩阵范围扫描。 */
+/** Read-only matrix bounds scans for interactive authoring checks. */
 
 import { animationBoundsFingerprint, modelBoundsFingerprint, type BoundsDetectionRecord } from "./bounds-cache";
 import { assertBoundsTaskActive, type BoundsTaskControl, yieldBoundsTask } from "./bounds-task";
@@ -15,7 +15,7 @@ function vector(value: number[] | undefined, fallback: Vec3 = [0, 0, 0]): Vec3 {
   return value ? [value[0] ?? 0, value[1] ?? 0, value[2] ?? 0] : [...fallback];
 }
 
-/** Blockbench 的 Java 格式使用 ZYX 欧拉角顺序。 */
+/** Blockbench Java models use ZYX Euler rotation order. */
 function rotateZYX(point: Vec3, rotation: Vec3, origin: Vec3): Vec3 {
   let x = point[0] - origin[0];
   let y = point[1] - origin[1];
@@ -88,11 +88,11 @@ function collectFrameHits(frame: number, animation: Animation): OutOfBoundsHit[]
     const element = Outliner.elements[index];
     if (!element.from || !element.to || element.export === false) continue;
     const corners = transformedCorners(element, animation);
+    const chain = groupChain(element).map((group) => group.uuid);
     for (let axis = 0; axis < 3; axis++) {
       const values = corners.map((corner) => corner[axis]);
       const low = Math.min(...values);
       const high = Math.max(...values);
-      const chain = groupChain(element).map((group) => group.uuid);
       if (low < MIN) hits.push({
         frame, elementIndex: index, elementName: element.name, axis: (["x", "y", "z"] as const)[axis],
         field: "from", value: low, sourceElementUuid: element.uuid, sourceGroupUuids: chain,

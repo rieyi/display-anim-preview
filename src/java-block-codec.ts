@@ -12,12 +12,17 @@ function isCompilingCodec(value: unknown): value is JavaBlockCodec {
 
 /**
  * Some third-party formats remove `Codecs.java_block` from the registry when they unload, while
- * Blockbench's built-in Java format still retains the live codec instance. Prefer the current
- * format when it exposes a compiler, then fall back to the built-in Java format and registry.
+ * Blockbench's built-in Java format still retains the live codec instance. Fall back from the
+ * built-in Java format to the codec registry.
+ *
+ * `Format.codec` is deliberately NOT consulted: the live JDA format object's `codec` resolves to
+ * `Codecs.project` (Blockbench reassigns it after registration), whose `compile()` serializes the
+ * whole bbmodel project instead of producing a Java item model — that mismatch used to crash the
+ * resource pack writer with `value.startsWith is not a function` when it received Texture objects
+ * instead of texture reference strings.
  */
 export function resolveJavaBlockCodec(): JavaBlockCodec {
   const candidates: unknown[] = [
-    typeof Format !== "undefined" ? Format?.codec : undefined,
     typeof Formats !== "undefined" ? Formats.java_block?.codec : undefined,
     typeof Codecs !== "undefined" ? Codecs.java_block : undefined,
   ];

@@ -1,9 +1,5 @@
 export type CompiledDisplay = Record<string, unknown>;
 
-type CompiledModel = {
-  display?: CompiledDisplay;
-} & Record<string, unknown>;
-
 export function cloneCompiledDisplay(
   display: CompiledDisplay | undefined
 ): CompiledDisplay | undefined {
@@ -12,13 +8,17 @@ export function cloneCompiledDisplay(
     : undefined;
 }
 
-/** Replaces potentially stale frame display data with the export-start snapshot. */
-export function applyCompiledDisplaySnapshot(
-  json: string,
+/**
+ * Replaces potentially stale frame display data with the export-start snapshot.
+ * Operates on the already-parsed model object; the snapshot is shared by
+ * reference across all frames of a bake batch and must stay frozen —
+ * consumers may rewrite `textures` and `elements` but never `display`.
+ */
+export function applyCompiledDisplaySnapshot<T extends { display?: CompiledDisplay }>(
+  model: T,
   display: CompiledDisplay | undefined
-): string {
-  if (!display) return json;
-  const compiled = JSON.parse(json) as CompiledModel;
-  compiled.display = display;
-  return JSON.stringify(compiled);
+): T {
+  if (!display) return model;
+  model.display = display;
+  return model;
 }

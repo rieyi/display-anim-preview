@@ -1,4 +1,4 @@
-import { build } from "esbuild";
+import { importTestBundle } from "./lib/test-bundle.mjs";
 import { fileURLToPath } from "node:url";
 
 const i18nPath = fileURLToPath(new URL("../src/i18n.ts", import.meta.url));
@@ -28,25 +28,7 @@ async function runBuild(forcedLanguage, selectedLanguage) {
       keySetsMatch: JSON.stringify(Object.keys(translations.en ?? {}).sort()) === JSON.stringify(Object.keys(translations.zh ?? {}).sort())
     };
   `;
-  const output = await build({
-    stdin: {
-      contents: entry,
-      resolveDir: process.cwd(),
-      sourcefile: "i18n-test.ts",
-      loader: "ts",
-    },
-    bundle: true,
-    write: false,
-    platform: "node",
-    format: "esm",
-    target: "node20",
-    define: {
-      __DAP_FORCE_LANGUAGE__: forcedLanguage,
-    },
-  });
-  await import(
-    `data:text/javascript;base64,${Buffer.from(output.outputFiles[0].contents).toString("base64")}`
-  );
+  await importTestBundle(entry, { sourcefile: "i18n-test.ts", define: { __DAP_FORCE_LANGUAGE__: forcedLanguage, } });
   return globalThis.__I18N_RESULT__;
 }
 

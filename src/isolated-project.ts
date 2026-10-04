@@ -1,4 +1,4 @@
-/** 为需要展平层级的编译操作创建一次性 Blockbench 内存工程。 */
+/** Create disposable in-memory projects for compilation that flattens the hierarchy. */
 
 export interface SourceEditorState {
   project: ModelProjectInstance;
@@ -74,8 +74,14 @@ export async function withIsolatedProject<T>(
   } catch (error) {
     operationError = error;
   } finally {
+    // Closing the scratch project and restoring the source project must be
+    // independent: a close failure must not skip source restoration.
     try {
       if (ModelProject.all.includes(scratch)) await scratch.close(true);
+    } catch (closeError) {
+      console.error("Failed to close the isolated check project", closeError);
+    }
+    try {
       restoreSourceState(sourceState);
     } catch (restoreError) {
       if (!operationError) operationError = restoreError;

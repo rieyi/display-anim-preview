@@ -6,14 +6,22 @@ import {
 import { tr } from "./i18n";
 import { resolveJavaBlockCodec } from "./java-block-codec";
 import { assertBoundsTaskActive, type BoundsTaskControl, yieldBoundsTask } from "./bounds-task";
+import { assertNoHandScaleKeyframes, resolveProjectHandRig, type HandRigGroups } from "./hand-rig";
+import {
+  IDENTITY_MATRIX,
+  invertRigidMatrix,
+  multiplyMatrices,
+  captureHandPose,
+  type BakedHandPoses,
+} from "./hand-pose";
 
 /**
- * 把骨骼动画烘焙为扁平 Java 方块模型。变换累加与 Blockbench 烘焙动作一致，并由
- * Group.resolve() 展平层级。每帧都在随即取消的 Undo 事务中执行，以保护工程数据和历史。
- * `animations` 快照不可省略，因为关键帧属于 Group 动画器。
+ * Bake skeletal animation into flat Java block models using Blockbench transforms.
+ * Group.resolve() flattens the hierarchy inside a cancelled Undo transaction per frame.
+ * Include animation snapshots because Group animators own the keyframes.
  */
 
-/** 超出 Minecraft 模型限制的方块坐标。 */
+/** Cube coordinates outside the Minecraft model bounds. */
 export interface OutOfBoundsHit {
   frame: number;
   elementIndex: number;
@@ -21,16 +29,22 @@ export interface OutOfBoundsHit {
   axis: "x" | "y" | "z";
   field: "from" | "to";
   value: number;
-  /** 尽可能映射回层级展平前的大纲元素。 */
+  /** Map back to the source element before hierarchy flattening when possible. */
   sourceElementUuid?: string;
-  /** 从近到远的源父 Group，用于查找产生影响的关键帧。 */
+  /** Source ancestor groups, nearest first, for locating contributing keyframes. */
   sourceGroupUuids?: string[];
 }
 
 export interface BakedFrame {
   frame: number;
-  /** Blockbench codec 生成的 Java 模型 JSON。 */
-  json: string;
+  /**
+   * Parsed Java block model as emitted by the Blockbench codec. Frames are
+   * single-use: `buildResourcePack` rewrites texture and element entries in
+   * place, so the same frame objects must not be fed through it twice.
+   */
+  model: Record<string, unknown>;
+  /** Per-frame arm motion against fixed authoring anchors, including edited rest placement. */
+  hands?: BakedHandPoses;
 }
 
 export interface BakeResult {
@@ -56,13 +70,13 @@ function snapshotCompiledDisplay(): CompiledDisplay | undefined {
   }
 }
 
-/** 从内置 java_block 格式核实的 Minecraft Java 模型坐标限制。 */
+/** Minecraft Java coordinate limits verified against the built-in java_block format. */
 const COORDINATE_MIN = -16;
 const COORDINATE_MAX = 32;
 
 const AXIS_NAMES: Array<"x" | "y" | "z"> = ["x", "y", "z"];
 
-/** 把当前时间轴位置的动画偏移累加到静态节点数据。 */
+/** Apply the current timeline animation offsets to static node data. */
 function applyAnimatedOffsets(node: OutlinerNodeLike, animation: Animation): void {
   const offsetRotation: [number, number, number] = [0, 0, 0];
   const offsetPosition: [number, number, number] = [0, 0, 0];
@@ -96,7 +110,7 @@ function applyAnimatedOffsets(node: OutlinerNodeLike, animation: Animation): voi
   applyPositionOffset(node, offsetPosition);
 }
 
-/** 平移节点子树中的全部坐标。 */
+/** Translate every coordinate in a node subtree. */
 function applyPositionOffset(node: OutlinerNodeLike, offset: [number, number, number]): void {
   if (node instanceof Group) {
     node.origin?.V3_add(offset);
@@ -112,7 +126,7 @@ function applyPositionOffset(node: OutlinerNodeLike, offset: [number, number, nu
   }
 }
 
-/** 反复解析顶层 Group，直到整个层级完全展平。 */
+/** Resolve top-level groups repeatedly until the hierarchy is flat. */
 function flattenHierarchy(): void {
   for (let round = 0; round < 100; round++) {
     const topLevel = Group.all.filter((group) => !(group.parent instanceof Group));
@@ -133,7 +147,7 @@ function belongsToRoot(node: OutlinerNodeLike, rootGroupUuid: string): boolean {
   return false;
 }
 
-/** 临时排除所选顶层 Group 之外的元素；相关标记由 Undo 恢复。 */
+/** Temporarily exclude elements outside the requested root; Undo restores the flags. */
 function restrictExportToRoot(rootGroupUuid?: string): void {
   if (!rootGroupUuid) return;
   for (const element of Outliner.elements) {
@@ -143,22 +157,15 @@ function restrictExportToRoot(rootGroupUuid?: string): void {
   }
 }
 
-/** 扫描编译帧中超出 Minecraft 限制的坐标。 */
+/** Scan compiled frames for coordinates outside Minecraft bounds. */
 function collectOutOfBounds(
   frame: number,
-  json: string,
+  model: { elements?: Array<{ name?: string; from: number[]; to: number[] }> },
   sources: Array<{ elementUuid: string; groupUuids: string[] }>
 ): OutOfBoundsHit[] {
   const hits: OutOfBoundsHit[] = [];
-  let parsed: { elements?: Array<{ name?: string; from: number[]; to: number[] }> };
-  try {
-    parsed = JSON.parse(json);
-  } catch (err) {
-    console.error(`Frame ${frame}: compiled model is not valid JSON`, err);
-    return hits;
-  }
 
-  const elements = parsed.elements ?? [];
+  const elements = model.elements ?? [];
   elements.forEach((element, elementIndex) => {
     const fields: Array<["from" | "to", number[]]> = [
       ["from", element.from],
@@ -184,7 +191,7 @@ function collectOutOfBounds(
   return hits;
 }
 
-/** 用作回滚完整性防线的关键帧总数。 */
+/** Count keyframes as a rollback integrity check. */
 function countKeyframes(): number {
   let total = 0;
   for (const animation of Animation.all) {
@@ -224,15 +231,72 @@ function safelyCancelBakeEdit(token: unknown): void {
   }
 }
 
+function readModelMatrix(group: OutlinerNodeLike): number[] {
+  const chain: OutlinerNodeLike[] = [];
+  let current: OutlinerNodeLike | "root" | null = group;
+  while (current && current !== "root") {
+    chain.unshift(current);
+    current = current.parent;
+  }
+
+  let matrix = IDENTITY_MATRIX.slice();
+  for (const item of chain) {
+    // Verified against Blockbench 5.1.6: mesh.matrix is the Group's animated
+    // parent-relative transform. matrixWorld additionally contains scene,
+    // display_base, display_area, and mode-specific centering transforms.
+    item.mesh.updateMatrixWorld(true);
+    const local = item.mesh.matrix.toArray();
+    if (local.length !== 16 || local.some((value) => !Number.isFinite(value))) {
+      throw new Error(`Invalid Blockbench model matrix for hand group ${item.name}.`);
+    }
+    matrix = multiplyMatrices(matrix, local);
+  }
+  return matrix;
+}
+
+function readHandMatrices(rig: HandRigGroups): BakedHandPoses {
+  const read = (side: "left" | "right") => {
+    const group = rig[side];
+    const pose = captureHandPose(side, readModelMatrix(group));
+    const cubes: OutlinerNodeLike[] = [];
+    group.forEachChild?.(node => { if (node instanceof Cube) cubes.push(node); });
+    if (!cubes.length) return pose;
+    const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+    // Bounds center in the hand group's local frame avoids world-AABB drift
+    // when a multi-cube hand rotates about an arbitrary authored pivot.
+    const inverse = invertRigidMatrix(readModelMatrix(group));
+    for (const cube of cubes) {
+      const { from, to, origin } = cube;
+      if (!from || !to || !origin) continue;
+      const local = multiplyMatrices(inverse, readModelMatrix(cube));
+      for (let corner = 0; corner < 8; corner++) {
+        const point = [0, 1, 2].map(axis => ((corner & (1 << axis)) ? to[axis] : from[axis]) - origin[axis]);
+        for (let axis = 0; axis < 3; axis++) {
+          const value = local[12 + axis] + point.reduce((sum, v, column) => sum + local[column * 4 + axis] * v, 0);
+          min[axis] = Math.min(min[axis], value); max[axis] = Math.max(max[axis], value);
+        }
+      }
+    }
+    const center = min.map((v, axis) => (v + max[axis]) / 2);
+    if (center.every(Number.isFinite)) {
+      const matrix = readModelMatrix(group);
+      pose.center = [0, 1, 2].map(axis => matrix[12 + axis] + center.reduce((sum, v, column) => sum + matrix[column * 4 + axis] * v, 0));
+    }
+    return pose;
+  };
+  return { left: read("left"), right: read("right") };
+}
+
 /**
- * 按指定 FPS 烘焙 `frameCount` 帧，并在结束后恢复时间轴、选择、播放、模型数据和 Undo 历史。
+ * Bake frameCount frames at the requested FPS and restore timeline, selection, playback, model data, and Undo history.
  */
 function* bakeFrameSteps(
   animation: Animation,
   frameCount: number,
   fps: number,
   rootGroupUuid?: string,
-  collectBounds = true
+  collectBounds = true,
+  captureHands = false
 ): Generator<{ frame: number; total: number }, BakeResult, void> {
   if (Undo.current_save) {
     throw new Error(tr("dap.bake.active_edit"));
@@ -253,6 +317,7 @@ function* bakeFrameSteps(
   const originalModeId = Modes.selected.id;
   const displaySnapshot = snapshotCompiledDisplay();
   const sourceGroups = new Map<string, string[]>();
+  let handRig: HandRigGroups | null = null;
   if (collectBounds) {
     for (const element of Outliner.elements) {
       const groupUuids: string[] = [];
@@ -275,13 +340,28 @@ function* bakeFrameSteps(
     const initialTarget = Animation.all.find((item) => item.uuid === sourceAnimationUuid);
     if (!initialTarget) throw new Error(`Animation ${sourceAnimationUuid} is no longer available.`);
     initialTarget.select();
+    if (captureHands) {
+      handRig = resolveProjectHandRig();
+      if (!handRig) throw new Error(tr("dap.hand.rig_missing"));
+      assertNoHandScaleKeyframes(initialTarget, handRig);
+
+    }
     initialTarget.playing = true;
 
     for (let frame = 0; frame < frameCount; frame++) {
       const targetAnimation = Animation.all.find((item) => item.uuid === sourceAnimationUuid);
       if (!targetAnimation) throw new Error(`Animation ${sourceAnimationUuid} disappeared during baking.`);
+      // Undo may recreate group meshes with stale parent-relative transforms.
+      // Rebuild the default hierarchy before applying this frame's animation.
+      if (handRig) {
+        handRig = resolveProjectHandRig();
+        if (!handRig) throw new Error(tr("dap.hand.rig_missing"));
+        Canvas.updateAll();
+      }
       Timeline.setTime(frame / fps);
       Animator.preview();
+      const currentHands = handRig ? readHandMatrices(handRig) : null;
+      const hands = currentHands ?? undefined;
 
       const token = Undo.initEdit({
         elements: Outliner.elements.slice(),
@@ -293,6 +373,12 @@ function* bakeFrameSteps(
 
       try {
         restrictExportToRoot(rootGroupUuid);
+        // Omit authored hand proxies only in the temporary bake transaction.
+        if (handRig) {
+          for (const group of [handRig.left, handRig.right]) {
+            group.forEachChild?.(node => { node.export = false; });
+          }
+        }
         const animatableElements = Outliner.elements.filter(
           (element) => element.constructor.animator
         );
@@ -310,13 +396,13 @@ function* bakeFrameSteps(
               }))
           : [];
 
-        const json = applyCompiledDisplaySnapshot(
-          resolveJavaBlockCodec().compile({ prevent_dialog: true }),
-          displaySnapshot
-        );
-        frames.push({ frame, json });
+        const compiled = JSON.parse(
+          resolveJavaBlockCodec().compile({ prevent_dialog: true })
+        ) as Record<string, unknown>;
+        const model = applyCompiledDisplaySnapshot(compiled, displaySnapshot);
+        frames.push({ frame, model, hands });
         if (collectBounds) {
-          outOfBounds.push(...collectOutOfBounds(frame, json, compiledSources));
+          outOfBounds.push(...collectOutOfBounds(frame, model, compiledSources));
         }
       } finally {
         safelyCancelBakeEdit(token);
@@ -382,7 +468,7 @@ export function bakeFrames(
   }
 }
 
-/** 供可取消隔离范围检测使用的异步逐帧烘焙。 */
+/** Asynchronous frame baking for cancellable, isolated bounds checks. */
 export async function bakeFramesAsync(
   animation: Animation,
   frameCount: number,
@@ -390,9 +476,10 @@ export async function bakeFramesAsync(
   control: BoundsTaskControl,
   onFrame?: (frame: number, total: number) => void,
   rootGroupUuid?: string,
-  collectBounds = true
+  collectBounds = true,
+  captureHands = false
 ): Promise<BakeResult> {
-  const generator = bakeFrameSteps(animation, frameCount, fps, rootGroupUuid, collectBounds);
+  const generator = bakeFrameSteps(animation, frameCount, fps, rootGroupUuid, collectBounds, captureHands);
   let completed = false;
   try {
     while (true) {
@@ -425,7 +512,5 @@ export function bakeAnimationSequence(
   };
 }
 
-/** 根据时长和 FPS 计算包含首尾端点的帧数。 */
-export function frameCountFor(length: number, fps: number): number {
-  return Math.floor(length * fps) + 1;
-}
+// Single source of truth lives in export-layout; re-exported for existing consumers.
+export { frameCountFor } from "./export-layout";

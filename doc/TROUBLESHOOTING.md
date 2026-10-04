@@ -1,6 +1,6 @@
 # Java Display Animator — Troubleshooting
 
-For version 1.1.0. See the [overview](../README.md), [usage guide](USAGE.md),
+For version 1.1.2. See the [overview](../README.md), [usage guide](USAGE.md),
 or [Chinese troubleshooting](TROUBLESHOOTING.zh-CN.md).
 
 ## FAQ
@@ -36,3 +36,7 @@ or [Chinese troubleshooting](TROUBLESHOOTING.zh-CN.md).
   reports an error and rejects the new request. Only a missing or invalid `strings[0]` value in item
   data uses the resource-model fallback to the default animation track.
 - Confirm the item uses the generated `minecraft:item_model` component.
+
+## Player arms show player-head textures
+
+Disable shader packs, enable the generated resource pack, and reload resources with F3+T. Check both first-person hands. Core-shader compatibility with other packs and Minecraft versions is not guaranteed.

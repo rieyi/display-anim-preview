@@ -1,10 +1,10 @@
 /** Builds the Minecraft 26.2 datapack that drives baked JSB item animations. */
 
-import { EXPORT_NAMESPACE, phaseObjectiveFor } from "./export-layout";
+import { EXPORT_NAMESPACE, MAX_EXPORT_FPS, phaseObjectiveFor } from "./export-layout";
+import { isValidAnimationKey } from "./animation-export-plan";
 import { tr } from "./i18n";
 
 const DATA_PACK_FORMAT: [number, number] = [107, 1];
-const ANIMATION_KEY_PATTERN = /^[a-z0-9_.-]+$/;
 
 export interface DatapackAnimation {
   key: string;
@@ -26,6 +26,7 @@ export interface DatapackOptions {
   defaultAnimationKey: string;
   description: string;
   debugEnabled?: boolean;
+  handRenderingEnabled?: boolean;
 }
 
 export interface DatapackFile {
@@ -93,7 +94,19 @@ function itemAnimationState(
   max: number,
   phase: number
 ): string {
-  return `{jsb:{project:${JSON.stringify(projectName)},animation:${JSON.stringify(animationKey)},frame:${frame},mode:${mode},max:${max},phase:${phase}}}`;
+  const state = itemAnimationStateValue(projectName, animationKey, frame, mode, max, phase);
+  return `{jsb:{project:${JSON.stringify(state.jsb.project)},animation:${JSON.stringify(state.jsb.animation)},frame:${state.jsb.frame},mode:${state.jsb.mode},max:${state.jsb.max},phase:${state.jsb.phase}}}`;
+}
+
+function itemAnimationStateValue(
+  projectName: string,
+  animationKey: string,
+  frame: number,
+  mode: number,
+  max: number,
+  phase: number
+): { jsb: { project: string; animation: string; frame: number; mode: number; max: number; phase: number } } {
+  return { jsb: { project: projectName, animation: animationKey, frame, mode, max, phase } };
 }
 
 function frameModifier(frameObjective: string, animationKey?: string): Record<string, unknown> {
@@ -122,12 +135,7 @@ function validateAnimations(options: DatapackOptions): Map<string, DatapackAnima
   if (!options.animations.length) throw new Error("At least one animation is required");
   const animations = new Map<string, DatapackAnimation>();
   for (const animation of options.animations) {
-    if (
-      !ANIMATION_KEY_PATTERN.test(animation.key) ||
-      animation.key === "." ||
-      animation.key === ".." ||
-      animation.key === "_generated"
-    ) {
+    if (!isValidAnimationKey(animation.key)) {
       throw new Error(`Unsafe animation key: ${JSON.stringify(animation.key)}`);
     }
     if (!Number.isInteger(animation.frameCount) || animation.frameCount < 1) {
@@ -145,8 +153,8 @@ function validateAnimations(options: DatapackOptions): Map<string, DatapackAnima
 }
 
 export function buildDatapack(options: DatapackOptions): DatapackFile[] {
-  if (!Number.isInteger(options.playbackFps) || options.playbackFps < 1 || options.playbackFps > 20) {
-    throw new Error(`Playback FPS must be an integer from 1 to 20: ${options.playbackFps}`);
+  if (!Number.isInteger(options.playbackFps) || options.playbackFps < 1 || options.playbackFps > MAX_EXPORT_FPS) {
+    throw new Error(`Playback FPS must be an integer from 1 to ${MAX_EXPORT_FPS}: ${options.playbackFps}`);
   }
   const animations = validateAnimations(options);
   const ns = EXPORT_NAMESPACE;
@@ -163,6 +171,12 @@ export function buildDatapack(options: DatapackOptions): DatapackFile[] {
   const phaseScore = phaseObjectiveFor(frameScore);
   const playbackFps = options.playbackFps;
   const tag = options.playingTag;
+  // With developer tips off the datapack is fully silent: no tellraw feedback
+  // or error messages, while command control flow (return codes) stays intact.
+  const tips = options.debugEnabled === true;
+  const holdItemLines = tips
+    ? [`${unlessHeld} ${tellraw(options, tr("dap.datapack.hold_item"), "red")}`]
+    : [];
   const defaultAnimation = animations.get(options.defaultAnimationKey)!;
   const defaultLastFrame = defaultAnimation.frameCount - 1;
   const inventorySlots = [
@@ -303,13 +317,43 @@ export function buildDatapack(options: DatapackOptions): DatapackFile[] {
   fn(
     "give",
     lines(
-      `give @s ${options.baseItem}[minecraft:item_model="${itemModelId}",minecraft:custom_model_data=${customModelData(defaultAnimation.key, 0)},minecraft:custom_data=${itemAnimationState(root, defaultAnimation.key, 0, 0, defaultLastFrame, 0)},minecraft:max_stack_size=1,${customNameComponent(options.itemDisplayName)}]`,
+      options.handRenderingEnabled
+        ? `loot give @s loot ${id("give")}`
+        : `give @s ${options.baseItem}[minecraft:item_model="${itemModelId}",minecraft:custom_model_data=${customModelData(defaultAnimation.key, 0)},minecraft:custom_data=${itemAnimationState(root, defaultAnimation.key, 0, 0, defaultLastFrame, 0)},minecraft:max_stack_size=1,${customNameComponent(options.itemDisplayName)}]`,
       ...(options.debugEnabled ? [tellraw(options, tr("dap.datapack.item_given", {
         namespace: `${ns}:${root}`,
         animation: defaultAnimation.key,
       }), "green")] : [])
     )
   );
+  if (options.handRenderingEnabled) {
+    files.push({
+      path: `data/${ns}/loot_table/${root}/give.json`,
+      content: json({
+        type: "minecraft:command",
+        pools: [{
+          rolls: 1,
+          entries: [{
+            type: "minecraft:item",
+            name: "minecraft:player_head",
+            functions: [
+              {
+                function: "minecraft:set_components",
+                components: {
+                  "minecraft:item_model": itemModelId,
+                  "minecraft:custom_model_data": { strings: [defaultAnimation.key], floats: [0] },
+                  "minecraft:custom_data": itemAnimationStateValue(root, defaultAnimation.key, 0, 0, defaultLastFrame, 0),
+                  "minecraft:max_stack_size": 1,
+                  "minecraft:custom_name": { text: options.itemDisplayName, color: "gold", italic: false },
+                },
+              },
+              { function: "minecraft:fill_player_head", entity: "this" },
+            ],
+          }],
+        }],
+      }),
+    });
+  }
   fn(
     "_internal/validate_animation",
     lines(
@@ -330,32 +374,40 @@ export function buildDatapack(options: DatapackOptions): DatapackFile[] {
   fn(
     "_internal/error/invalid_animation",
     lines(
-      dynamicErrorTellraw(
-        options,
-        "dap.datapack.invalid_animation",
-        "animation",
-        "request.animation",
-        runtimeStorage
-      )
+      ...(tips
+        ? [
+            dynamicErrorTellraw(
+              options,
+              "dap.datapack.invalid_animation",
+              "animation",
+              "request.animation",
+              runtimeStorage
+            ),
+          ]
+        : ["return 0"])
     )
   );
   fn(
     "_internal/error/invalid_mode",
     lines(
-      dynamicErrorTellraw(
-        options,
-        "dap.datapack.invalid_mode",
-        "mode",
-        "request.mode",
-        runtimeStorage
-      )
+      ...(tips
+        ? [
+            dynamicErrorTellraw(
+              options,
+              "dap.datapack.invalid_mode",
+              "mode",
+              "request.mode",
+              runtimeStorage
+            ),
+          ]
+        : ["return 0"])
     )
   );
 
   fn(
     "play",
     lines(
-      `${unlessHeld} ${tellraw(options, tr("dap.datapack.hold_item"), "red")}`,
+      ...holdItemLines,
       `${unlessHeld} return 0`,
       `data remove storage ${runtimeStorage} request`,
       `$data modify storage ${runtimeStorage} request.animation set value "$(animation)"`,
@@ -372,7 +424,7 @@ export function buildDatapack(options: DatapackOptions): DatapackFile[] {
   fn(
     "frame",
     lines(
-      `${unlessHeld} ${tellraw(options, tr("dap.datapack.hold_item"), "red")}`,
+      ...holdItemLines,
       `${unlessHeld} return 0`,
       `data remove storage ${runtimeStorage} request`,
       `$data modify storage ${runtimeStorage} request.animation set value "$(animation)"`,
@@ -385,10 +437,10 @@ export function buildDatapack(options: DatapackOptions): DatapackFile[] {
   fn(
     "stop",
     lines(
-      `${unlessHeld} ${tellraw(options, tr("dap.datapack.hold_item"), "red")}`,
+      ...holdItemLines,
       `${unlessHeld} return 0`,
       `function ${id("_internal/reset_default")}`,
-      tellraw(options, tr("dap.datapack.stopped"), "yellow")
+      ...(tips ? [tellraw(options, tr("dap.datapack.stopped"), "yellow")] : [])
     )
   );
 
@@ -411,11 +463,13 @@ export function buildDatapack(options: DatapackOptions): DatapackFile[] {
         ...start,
         `scoreboard players set @s ${modeScore} 1`,
         ...finish,
-        tellraw(options, tr("dap.datapack.loop_started", {
-          animation: animation.displayName,
-          fps: options.playbackFps,
-          last_frame: lastFrame,
-        }), "green")
+        ...(tips
+          ? [tellraw(options, tr("dap.datapack.loop_started", {
+              animation: animation.displayName,
+              fps: options.playbackFps,
+              last_frame: lastFrame,
+            }), "green")]
+          : [])
       )
     );
     fn(
@@ -424,10 +478,12 @@ export function buildDatapack(options: DatapackOptions): DatapackFile[] {
         ...start,
         `scoreboard players set @s ${modeScore} 2`,
         ...finish,
-        tellraw(options, tr("dap.datapack.once_started", {
-          animation: animation.displayName,
-          last_frame: lastFrame,
-        }), "green")
+        ...(tips
+          ? [tellraw(options, tr("dap.datapack.once_started", {
+              animation: animation.displayName,
+              last_frame: lastFrame,
+            }), "green")]
+          : [])
       )
     );
     fn(

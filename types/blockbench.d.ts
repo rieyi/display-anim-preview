@@ -89,6 +89,7 @@ declare global {
   const Formats: Record<string, ModelFormatInstance | undefined>;
   const Format: ModelFormatInstance;
   const Canvas: {
+    scene: THREE.Scene;
     updateAll(): void;
   };
 
@@ -97,6 +98,7 @@ declare global {
   }
 
   interface PropertyOptions {
+    exposed?: boolean;
     default?: unknown;
     label?: string;
     description?: string;
@@ -138,13 +140,18 @@ declare global {
     icon: string;
     category?: string;
     condition?: () => boolean;
-    click(): void;
+    children?: Array<Action | string>;
+    searchable?: boolean;
+    click?(): void;
   }
 
   class Action {
+    readonly id: string;
     constructor(id: string, options: ActionOptions);
     delete(): void;
   }
+
+  const Toolbars: { timeline: { children: Array<Action | string>; add(action: Action, index?: number): void } };
 
   const MenuBar: {
     addAction(action: Action, path: string): void;
@@ -164,8 +171,8 @@ declare global {
         message: string;
         icon?: string;
         buttons?: string[];
-        confirm?: number;
-        cancel?: number;
+        confirmIndex?: number;
+        cancelIndex?: number;
       },
       callback?: (buttonIndex: number) => void
     ): void;
@@ -180,6 +187,11 @@ declare global {
      * `savetype: "image"` decodes a `data:image/png;base64,…` content string.
      */
     writeFile(path: string, options: { content: string; savetype?: "text" | "image" | "zip" }): void;
+    /** Verified live against Blockbench 5.1.6: desktop file picker callback receives file descriptors. */
+    import(
+      options: { resource_id?: string; title?: string; type: string; extensions: string[]; multiple?: boolean },
+      callback: (files: BlockbenchFile[]) => void
+    ): void;
     export(options: {
       resource_id?: string;
       type: string;
@@ -234,9 +246,14 @@ declare global {
      * bookkeeping so the caller can wrap a whole frame in one transaction.
      */
     resolve(undo?: boolean): OutlinerNodeLike[];
+    init(): GroupInstance;
+    addTo(parent: GroupInstance | "root"): GroupInstance;
+    remove(): void;
+    forEachChild(callback: (child: OutlinerNodeLike) => void): void;
   }
   const Group: {
     all: GroupInstance[];
+    properties?: Record<string, PropertyInstance>;
     new (...args: unknown[]): GroupInstance;
   };
   type Group = GroupInstance;
@@ -298,12 +315,19 @@ declare global {
     origin?: number[];
     rotation?: number[];
     inflate?: number;
+    box_uv?: boolean;
+    uv_offset?: number[];
     export?: boolean;
     visibility?: boolean;
     selected: boolean;
     mesh: THREE_Object3D;
+    faces?: Record<string, { uv: number[]; texture: string | null }>;
     constructor: { animator?: unknown };
     getTypeBehavior(behavior: string): boolean;
+    init(): OutlinerNodeLike;
+    addTo(parent: GroupInstance | "root"): OutlinerNodeLike;
+    remove(): void;
+    applyTexture?(texture: TextureInstance, blank?: boolean): void;
   }
 
   const Outliner: { root: OutlinerNodeLike[]; elements: OutlinerNodeLike[]; selected: OutlinerNodeLike[] };
@@ -325,7 +349,12 @@ declare global {
   }
   const Keyframe: { selected: KeyframeInstance[] };
 
-  const Cube: { all: OutlinerNodeLike[] };
+  const Cube: {
+    all: OutlinerNodeLike[];
+    properties?: Record<string, PropertyInstance>;
+    new (options?: Record<string, unknown>, uuid?: string): OutlinerNodeLike;
+    [Symbol.hasInstance](value: unknown): boolean;
+  };
 
   /**
    * Project textures. Verified live: `id` is a numeric string matching the
@@ -336,14 +365,38 @@ declare global {
    */
   interface TextureInstance {
     id: string;
+    uuid: string;
     name: string;
     folder: string;
     width: number;
     height: number;
     getDataURL(): string;
     javaTextureLink(): string;
+    fromFile(file: BlockbenchFile): TextureInstance;
+    fromDataURL(dataUrl: string): TextureInstance;
+    add(undo?: boolean, uvSizeFromResolution?: boolean): TextureInstance;
+    remove(undo?: boolean): void;
+    getActiveCanvas(): CanvasLike;
   }
-  const Texture: { all: TextureInstance[] };
+  const Texture: {
+    all: TextureInstance[];
+    properties?: Record<string, PropertyInstance>;
+    new (options?: Record<string, unknown>, uuid?: string): TextureInstance;
+  };
+
+  interface BlockbenchFile {
+    name: string;
+    path?: string;
+    content?: string | ArrayBuffer;
+  }
+
+  interface CanvasLike {
+    getContext(type: "2d"): Canvas2DContextLike;
+  }
+
+  interface Canvas2DContextLike {
+    getImageData(x: number, y: number, width: number, height: number): { data: ArrayLike<number> };
+  }
 
   /**
    * `Undo.cancelEdit(true)` reverts to the pre-edit snapshot WITHOUT adding a
@@ -360,9 +413,17 @@ declare global {
     initEdit(aspects: {
       elements?: OutlinerNodeLike[];
       groups?: GroupInstance[];
+      textures?: TextureInstance[];
       outliner?: boolean;
       animations?: AnimationInstance[];
     }): unknown;
+    finishEdit(message: string, aspects?: {
+      elements?: OutlinerNodeLike[];
+      groups?: GroupInstance[];
+      textures?: TextureInstance[];
+      outliner?: boolean;
+      animations?: AnimationInstance[];
+    }): void;
     cancelEdit(revert_changes?: boolean): void;
   };
 
@@ -402,12 +463,16 @@ declare global {
   };
 
   interface DisplaySettingsEntry {
+    rotation_pivot?: [number, number, number];
+    scale_pivot?: [number, number, number];
+    mirror?: [boolean, boolean, boolean];
     rotation: [number, number, number];
     translation: [number, number, number];
     scale: [number, number, number];
   }
 
   const Project: ({
+    model_3d: THREE.Object3D;
     name?: string;
     saved: boolean;
     /**
@@ -464,12 +529,23 @@ declare global {
     rotation: THREE_Euler;
     scale: THREE_Vector3;
     parent: THREE_Object3D | null;
+    matrix: THREE_Matrix4;
+    matrixWorld: THREE_Matrix4;
+    updateMatrixWorld(force?: boolean): void;
+  }
+
+  interface THREE_Matrix4 {
+    elements: number[];
+    toArray(): number[];
   }
 
   // --- DOM surface for building the control panel (no DOM lib — see
   // sibling project's types/blockbench.d.ts for why DOM lib is excluded:
   // it collides with Blockbench's own Group/Cube/Animation/Plugin globals). ---
   interface HTMLElementLike {
+    clientWidth: number;
+    clientHeight: number;
+    isConnected: boolean;
     appendChild(node: HTMLElementLike): void;
     style: Record<string, string>;
     remove(): void;
@@ -496,6 +572,7 @@ declare global {
 
   interface HTMLSelectElementLike extends HTMLElementLike {
     value: string;
+    disabled: boolean;
     onchange: ((event: InputEventLike) => void) | null;
   }
 
@@ -546,12 +623,19 @@ declare global {
     growable?: boolean;
     resizable?: boolean;
     default_position?: { slot: string; height: number; width: number; float_position?: [number, number]; float_size?: [number, number] };
+    min_height?: number;
     onResize?: () => void;
   }
 
   class Panel {
     constructor(id: string, options: PanelOptions);
     node: HTMLElementLike;
+    slot: string;
+    moveTo(slot: string): void;
+    fold(folded: boolean): void;
+    selectTab(): void;
+    moveToFront(): void;
+    isVisible(): boolean;
     update(): void;
     delete(): void;
   }

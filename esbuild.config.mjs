@@ -19,6 +19,13 @@ const options = {
   target: "es2020",
   platform: "browser",
   legalComments: "none",
+  loader: {
+    ".vsh": "text",
+    ".fsh": "text",
+    ".png": "dataurl",
+  },
+  // External map so stack traces in the browser devtools resolve to src/*.ts.
+  sourcemap: "external",
   define: {
     __DAP_FORCE_LANGUAGE__: forcedLanguage,
     __DAP_OFFICIAL_REPOSITORY__: officialRepository,

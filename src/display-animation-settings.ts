@@ -44,6 +44,7 @@ export function registerDisplayAnimationProperty(): void {
   if (ModelProject.properties?.[PROPERTY_NAME]) return;
   settingsProperty = new Property(ModelProject, "object", PROPERTY_NAME, {
     default: {},
+    exposed: false,
     label: tr("dap.property.name"),
     description: tr("dap.property.description"),
   });

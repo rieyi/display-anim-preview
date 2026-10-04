@@ -1,4 +1,4 @@
-/** 范围检测共用的异步进度与取消协议。 */
+/** Shared asynchronous progress and cancellation protocol for bounds checks. */
 
 export interface BoundsProgress {
   mode: "quick" | "exact";
@@ -26,7 +26,7 @@ export function assertBoundsTaskActive(control: BoundsTaskControl): void {
   if (control.isCancelled()) throw new BoundsTaskCancelledError();
 }
 
-/** 在帧之间把控制权交还 Blockbench，使进度条和取消按钮能够刷新。 */
+/** Yield between frames so Blockbench can update progress and cancellation controls. */
 export function yieldBoundsTask(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }

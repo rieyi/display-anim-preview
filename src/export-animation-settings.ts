@@ -1,6 +1,6 @@
 /** Multi-animation export settings persisted with the Blockbench project. */
 
-import { defaultRuntimeNames, sanitizeProjectName } from "./export-layout";
+import { MAX_EXPORT_FPS, defaultRuntimeNames, sanitizeProjectName } from "./export-layout";
 import { tr } from "./i18n";
 
 export type ExportOutputMode =
@@ -12,7 +12,7 @@ export type ExportOutputMode =
 export type ExportWriteMode = "create" | "insert";
 
 export interface StoredExportAnimationSettings {
-  version: 6;
+  version: 7;
   selectedAnimationUuids: string[];
   defaultAnimationUuid: string;
   packName: string;
@@ -26,6 +26,12 @@ export interface StoredExportAnimationSettings {
   maxFrameObjective: string;
   playingTag: string;
   debugEnabled?: boolean;
+  handRenderingEnabled: boolean;
+  /** Optional v7 extension. Existing v7 files remain v7 and migrate without rewriting UUIDs. */
+  handRigRootUuid?: string;
+  handLeftGroupUuid?: string;
+  handRightGroupUuid?: string;
+  handPreviewTextureUuid?: string;
   exactBoundsOnExport: boolean;
   animationFps: number;
   sharedRoot: string;
@@ -48,7 +54,10 @@ function isWriteMode(value: unknown): value is ExportWriteMode {
 
 export function normalizeAnimationFps(value: unknown): number {
   const numeric = typeof value === "number" ? value : Number(value);
-  return Math.min(20, Math.max(1, Math.round(Number.isFinite(numeric) ? numeric : 20)));
+  return Math.min(
+    MAX_EXPORT_FPS,
+    Math.max(1, Math.round(Number.isFinite(numeric) ? numeric : MAX_EXPORT_FPS))
+  );
 }
 
 function storedSettings(): StoredExportAnimationSettings | null {
@@ -58,7 +67,7 @@ function storedSettings(): StoredExportAnimationSettings | null {
     | undefined;
   if (
     !value ||
-    (value.version !== 2 && value.version !== 3 && value.version !== 4 && value.version !== 5 && value.version !== 6) ||
+    (value.version !== 2 && value.version !== 3 && value.version !== 4 && value.version !== 5 && value.version !== 6 && value.version !== 7) ||
     !Array.isArray(value.selectedAnimationUuids) ||
     typeof value.defaultAnimationUuid !== "string" ||
     typeof value.packName !== "string" ||
@@ -75,7 +84,7 @@ function storedSettings(): StoredExportAnimationSettings | null {
     return null;
   }
   return {
-    version: 6,
+    version: 7,
     selectedAnimationUuids: value.selectedAnimationUuids.filter(
       (uuid): uuid is string => typeof uuid === "string"
     ),
@@ -91,6 +100,11 @@ function storedSettings(): StoredExportAnimationSettings | null {
     maxFrameObjective: value.maxFrameObjective,
     playingTag: value.playingTag,
     debugEnabled: value.debugEnabled === true,
+    handRenderingEnabled: value.handRenderingEnabled === true,
+    handRigRootUuid: typeof value.handRigRootUuid === "string" ? value.handRigRootUuid : undefined,
+    handLeftGroupUuid: typeof value.handLeftGroupUuid === "string" ? value.handLeftGroupUuid : undefined,
+    handRightGroupUuid: typeof value.handRightGroupUuid === "string" ? value.handRightGroupUuid : undefined,
+    handPreviewTextureUuid: typeof value.handPreviewTextureUuid === "string" ? value.handPreviewTextureUuid : undefined,
     exactBoundsOnExport: value.exactBoundsOnExport !== false,
     animationFps: normalizeAnimationFps(value.animationFps),
     sharedRoot: typeof value.sharedRoot === "string" ? value.sharedRoot : "",
@@ -103,6 +117,7 @@ export function registerExportAnimationSettingsProperty(): void {
   if (ModelProject.properties?.[PROPERTY_NAME]) return;
   settingsProperty = new Property(ModelProject, "object", PROPERTY_NAME, {
     default: {},
+    exposed: false,
     label: tr("dap.export.property.name"),
     description: tr("dap.export.property.description"),
   });
@@ -134,7 +149,7 @@ export function initialExportSettings(
         : selected[0]) ?? "";
 
   return {
-    version: 6,
+    version: 7,
     selectedAnimationUuids: selected,
     defaultAnimationUuid,
     packName: stored?.packName || projectName,
@@ -148,6 +163,11 @@ export function initialExportSettings(
     maxFrameObjective: stored?.maxFrameObjective || runtime.maxFrameObjective,
     playingTag: stored?.playingTag || runtime.playingTag,
     debugEnabled: stored?.debugEnabled === true,
+    handRenderingEnabled: stored?.handRenderingEnabled === true,
+    handRigRootUuid: stored?.handRigRootUuid,
+    handLeftGroupUuid: stored?.handLeftGroupUuid,
+    handRightGroupUuid: stored?.handRightGroupUuid,
+    handPreviewTextureUuid: stored?.handPreviewTextureUuid,
     exactBoundsOnExport: stored?.exactBoundsOnExport !== false,
     animationFps: stored?.animationFps ?? 20,
     sharedRoot: stored?.sharedRoot ?? "",
@@ -162,10 +182,11 @@ export function rememberExportSettings(
 ): void {
   if (!Project) return;
   Project[PROPERTY_NAME] = {
-    version: 6,
+    version: 7,
     ...settings,
     selectedAnimationUuids: [...settings.selectedAnimationUuids],
     debugEnabled: settings.debugEnabled === true,
+    handRenderingEnabled: settings.handRenderingEnabled === true,
   } satisfies StoredExportAnimationSettings;
   Project.saved = false;
 }
@@ -175,9 +196,10 @@ export function rememberExportSettingsDraft(settings: StoredExportAnimationSetti
   if (!Project) return;
   Project[PROPERTY_NAME] = {
     ...settings,
-    version: 6,
+    version: 7,
     selectedAnimationUuids: [...settings.selectedAnimationUuids],
     debugEnabled: settings.debugEnabled === true,
+    handRenderingEnabled: settings.handRenderingEnabled === true,
   } satisfies StoredExportAnimationSettings;
   Project.saved = false;
 }

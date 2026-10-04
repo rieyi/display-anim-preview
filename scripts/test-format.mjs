@@ -1,4 +1,4 @@
-import { build } from "esbuild";
+import { importTestBundle } from "./lib/test-bundle.mjs";
 import { fileURLToPath } from "node:url";
 
 const entry = `
@@ -137,6 +137,16 @@ const entry = `
     throw new Error("legacy-format fallback did not use the retained built-in Java codec");
   }
 
+  // Regression: Blockbench rebinds the live JDA format's codec to Codecs.project at
+  // runtime; that compiler serializes the whole bbmodel project (Texture objects
+  // instead of "#ref" strings) and crashed exports with "value.startsWith is not a
+  // function". A compiling live-format codec must be ignored in favor of the real
+  // Java block compiler registered on the java_block format.
+  globalThis.Format = { id: FORMAT_ID, codec: { compile() { return "{}"; } } };
+  if (resolveJavaBlockCodec() !== retainedBuiltInCodec) {
+    throw new Error("the live format codec (Codecs.project) must never be used as the Java compiler");
+  }
+
   process.stdout.write(JSON.stringify({
     ...FORMAT_COORDINATE_OPTIONS,
     javaModelCompatibility: true,
@@ -145,23 +155,8 @@ const entry = `
     standalone: true,
     coexistence: true,
     legacyCodecFallback: true,
+    liveFormatCodecIgnored: true,
   }));
 `;
 
-const output = await build({
-  stdin: {
-    contents: entry,
-    resolveDir: process.cwd(),
-    sourcefile: "format-test.ts",
-    loader: "ts",
-  },
-  bundle: true,
-  write: false,
-  platform: "node",
-  format: "esm",
-  target: "node20",
-});
-
-await import(
-  `data:text/javascript;base64,${Buffer.from(output.outputFiles[0].contents).toString("base64")}`
-);
+await importTestBundle(entry, { sourcefile: "format-test.ts" });

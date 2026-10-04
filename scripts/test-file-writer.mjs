@@ -1,4 +1,4 @@
-import { build } from "esbuild";
+import { importTestBundle } from "./lib/test-bundle.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -20,7 +20,7 @@ const entry=`
   globalThis.Blockbench={writeFile(filePath,options){fs.writeFileSync(filePath,options.content)}};
   const {previewPacks,writePacks}=await import(${JSON.stringify(modulePath)});
   const text=(path,content="generated")=>({path,content});
-  const target=(root,kind,insert,files)=>({scopeRoot:base,root,kind,projectName:"resin_gun",insert,files});
+  const target=(root,kind,insert,files,projectName="resin_gun")=>({scopeRoot:base,root,kind,projectName,insert,files});
 
   const resource=path.join(base,"resource");
   const resourceFiles=[text("pack.mcmeta",JSON.stringify({pack:{description:"generated"}})),
@@ -75,6 +75,46 @@ const entry=`
   let blocked=false;try{writePacks([target(conflict,"resource",true,[text("assets/jsb/items/resin_gun.json","generated")])])}catch{blocked=true}
   assert(blocked&&fs.readFileSync(path.join(conflict,"assets/jsb/items/resin_gun.json"),"utf8")==="user-owned","collision was overwritten");
 
+  // Core hand shaders are shared: identical files may be adopted, remain while another project owns
+  // them, and are removed only after the last owning project disables hand rendering.
+  const shared=path.join(base,"shared-shaders");
+  const shaders=[
+    text("assets/minecraft/shaders/core/entity.vsh","shared-vsh"),
+    text("assets/minecraft/shaders/core/entity.fsh","shared-fsh")
+  ];
+  const alpha=[text("pack.mcmeta",JSON.stringify({pack:{description:"shared"}})),
+    text("assets/jsb/items/alpha.json","alpha"),...shaders];
+  writePacks([target(shared,"resource",false,alpha,"alpha")]);
+  const beta=[text("pack.mcmeta","ignored"),text("assets/jsb/items/beta.json","beta"),...shaders];
+  preview=previewPacks([target(shared,"resource",true,beta,"beta")]);
+  assert(preview.conflicts.length===0,"identical shared shaders could not be adopted");
+  writePacks([target(shared,"resource",true,beta,"beta")]);
+  let sharedManifest=JSON.parse(fs.readFileSync(path.join(shared,"assets.jsbmeta"),"utf8"));
+  for(const project of ["alpha","beta"])
+    assert(sharedManifest.projects[project].files.includes("assets/minecraft/shaders/core/entity.fsh"),
+      "shared shader ownership missing for "+project);
+  preview=previewPacks([target(shared,"resource",true,alpha.slice(0,2),"alpha")]);
+  assert(preview.removed===0,"shader still owned by another project was scheduled for removal");
+  writePacks([target(shared,"resource",true,alpha.slice(0,2),"alpha")]);
+  assert(fs.existsSync(path.join(shared,"assets/minecraft/shaders/core/entity.vsh")),
+    "shared shader was removed while beta still owned it");
+  preview=previewPacks([target(shared,"resource",true,beta.slice(0,2),"beta")]);
+  assert(preview.removed===2,"last owner did not schedule shared shader removal");
+  writePacks([target(shared,"resource",true,beta.slice(0,2),"beta")]);
+  assert(!fs.existsSync(path.join(shared,"assets/minecraft/shaders/core/entity.vsh"))&&
+    !fs.existsSync(path.join(shared,"assets/minecraft/shaders/core/entity.fsh")),
+    "last owner disabling hands left shared shaders behind");
+
+  const shaderConflict=path.join(base,"shader-conflict");
+  fs.mkdirSync(path.join(shaderConflict,"assets/minecraft/shaders/core"),{recursive:true});
+  fs.writeFileSync(path.join(shaderConflict,"pack.mcmeta"),JSON.stringify({pack:{description:"foreign"}}));
+  fs.writeFileSync(path.join(shaderConflict,"assets/minecraft/shaders/core/entity.vsh"),"foreign-vsh");
+  preview=previewPacks([target(shaderConflict,"resource",true,[
+    text("assets/jsb/items/resin_gun.json","item"),...shaders
+  ])]);
+  assert(preview.conflicts.some(p=>p.endsWith("entity.vsh")),
+    "different unmanaged core shader did not block insertion");
+
   // Inject a commit failure after one target begins: every replaced file must roll back.
   const beforeItem=fs.readFileSync(path.join(resource,"assets/jsb/items/resin_gun.json"),"utf8");
   const beforeLoad=fs.readFileSync(path.join(data,"data/jsb/function/resin_gun/load.mcfunction"),"utf8");
@@ -94,6 +134,5 @@ const entry=`
   process.stdout.write(JSON.stringify({resourceFiles:manifest.projects.resin_gun.files.length,merged:2,rollback:true}));
 `;
 try{
-  const output=await build({stdin:{contents:entry,resolveDir:process.cwd(),sourcefile:"writer-test.ts",loader:"ts"},bundle:true,write:false,platform:"node",format:"esm",target:"node20",define:{__DAP_FORCE_LANGUAGE__:"null"}});
-  await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].contents).toString("base64")}`);
+  await importTestBundle(entry, { sourcefile: "writer-test.ts", define: {__DAP_FORCE_LANGUAGE__:"null"} });
 } finally { fs.rmSync(temporaryRoot,{recursive:true,force:true}); }

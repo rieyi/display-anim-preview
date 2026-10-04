@@ -1,4 +1,4 @@
-import { build } from "esbuild";
+import { importTestBundle } from "./lib/test-bundle.mjs";
 import { fileURLToPath } from "node:url";
 
 const mathPath = fileURLToPath(new URL("../src/math-bounds.ts", import.meta.url));
@@ -87,14 +87,4 @@ const entry = `
   process.stdout.write(JSON.stringify({ frames: records[0].frames, hits: records[0].hits.length, cacheInvalidated: status.stale }));
 `;
 
-const output = await build({
-  stdin: { contents: entry, resolveDir: process.cwd(), sourcefile: "bounds-engine-test.ts", loader: "ts" },
-  bundle: true,
-  write: false,
-  platform: "node",
-  format: "esm",
-  target: "node20",
-  define: { __DAP_FORCE_LANGUAGE__: "null" },
-});
-
-await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].contents).toString("base64")}`);
+await importTestBundle(entry, { sourcefile: "bounds-engine-test.ts", define: { __DAP_FORCE_LANGUAGE__: "null" } });

@@ -1,6 +1,6 @@
 /** Pure planning and validation for multi-animation exports. */
 
-import { isReservedAnimationKey } from "./export-layout";
+import { frameCountFor, isReservedAnimationKey } from "./export-layout";
 
 export interface ExportAnimationSpec {
   animation: Animation;
@@ -60,6 +60,6 @@ export function createExportAnimationSpecs(
     sourceName: animation.name,
     key: animationKeyFromName(animation.name),
     sourceFps: animation.snapping || fps,
-    frameCount: Math.floor(animation.length * fps) + 1,
+    frameCount: frameCountFor(animation.length, fps),
   }));
 }

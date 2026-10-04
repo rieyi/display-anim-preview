@@ -1,3 +1,4 @@
+import { registerFirstPersonPanel, disposeFirstPersonPanel, openFirstPersonPanel } from "./first-person-panel";
 import { openControlPanel, disposeControlPanel } from "./control-panel";
 import { enterDisplaySlot, currentSlot } from "./slot-controller";
 import { runBoundsCheck, disposeBoundsCheckPanel } from "./bounds-check-panel";
@@ -18,6 +19,7 @@ import {
   registerExportAnimationSettingsProperty,
   unregisterExportAnimationSettingsProperty,
 } from "./export-animation-settings";
+import { registerHandRigProperties, unregisterHandRigProperties } from "./hand-rig";
 
 declare const __DAP_OFFICIAL_REPOSITORY__: boolean | undefined;
 
@@ -25,11 +27,20 @@ const OPEN_ACTION_ID = "display_anim_preview_open_action";
 const CHECK_BOUNDS_ACTION_ID = "display_anim_preview_check_bounds";
 const EXPORT_ACTION_ID = "display_anim_preview_export_packs";
 const SETTINGS_ACTION_ID = "display_anim_preview_project_settings";
+const TOOLS_MENU_ID = "display_anim_preview_tools";
+const FIRST_PERSON_ACTION_ID = "display_anim_first_person_open";
 
+let firstPersonAction: Action | null = null;
 let openAction: Action | null = null;
 let checkBoundsAction: Action | null = null;
 let exportAction: Action | null = null;
 let settingsAction: Action | null = null;
+let toolsMenu: Action | null = null;
+
+function openNewProjectPreview(data?: unknown): void {
+  const event = data as { project?: { format?: { id?: string } } } | undefined;
+  if (event?.project?.format?.id === FORMAT_ID) openControlPanel();
+}
 
 const ABOUT_EN = `Java Display Animator creates frame-baked Minecraft Java item animations directly in Blockbench.
 
@@ -44,16 +55,17 @@ const ABOUT_EN = `Java Display Animator creates frame-baked Minecraft Java item 
 - Export under the fixed jsb namespace with short per-animation commands and a dynamic macro API.
 - Keep playback state independently on each unstackable generated item, so identical model items do not share animation progress.
 - Choose quick mathematical or exact isolated model-bounds checks with progress, cancellation, and per-animation status.
+- Create editable Classic/Slim player-arm bindings and export their sampled animation in both first-person views while using the current player's skin.
 
 ## Quick Start
 
-1. Create or open a **Java Display Animation** project.
+1. Create or open a **Java Display Animation** project. New projects open the display preview panel automatically.
 2. Build and animate the model in Blockbench's Animation mode.
 3. Configure item transforms in Display mode.
-4. Open **Display Animation Preview** and choose which display contexts animate.
+4. Use **Tools > Java Display Animator** to open Project Settings and the display-animation preview.
 5. Run **Export Resource Pack and Datapack**, select the animations and default, then create packs or insert the project into existing packs.
 
-Requires Blockbench Desktop 5.1.5 or newer. Generated packs target Minecraft Java 26.2.
+Requires Blockbench Desktop 5.1.5 or newer. Generated packs target Minecraft Java 26.2. Player-skin arms currently require Minecraft Java 1.21.11 or newer.
 
 [Source and full documentation](https://github.com/rieyi/display-anim-preview) | [Report an issue](https://github.com/rieyi/display-anim-preview/issues)`;
 
@@ -65,20 +77,21 @@ const ABOUT_ZH = `Java 逐帧显示动画可以直接在 Blockbench 中制作 Mi
 - 为每个显示位置独立开启或关闭动画。
 - 使用 Blockbench 官方时间轴同步播放和拖动预览。
 - 导出时选择多段命名动画、预览其 Minecraft key，并指定默认动画。
-- 每段动画按 Minecraft 每秒 20 游戏刻独立烘焙，并在全部动画轨之间去重相同模型帧。
+- 每段动画按工程设置的 1～20 FPS 独立烘焙，并在全部动画轨之间去重相同模型帧。
 - 创建新包，或以事务方式把当前项目模块插入已有的解压资源包和数据包。
 - 固定导出到 jsb 命名空间，并提供逐动画短命令和动态函数宏接口。
 - 可选择快速数学或精确隔离模型范围检测，并提供进度、取消和逐动画状态。
+- 创建可编辑的宽臂/细臂玩家手臂绑定，并将手臂动画逐帧导出到左右第一人称视角；游戏内使用当前玩家皮肤。
 
 ## 快速开始
 
-1. 新建或打开“**Java 逐帧显示动画**”工程。
+1. 新建或打开“**Java 逐帧显示动画**”工程；新建工程会自动打开显示位置动画预览面板。
 2. 在 Blockbench 动画模式中制作模型和动画。
 3. 在显示调整模式中配置物品变换。
-4. 打开“**显示位置动画预览**”，选择需要播放动画的显示位置。
+4. 在“**工具 → Java 逐帧显示动画**”中打开项目设置与显示位置动画预览。
 5. 运行“**导出资源包和数据包**”，勾选动画与默认段，再选择创建新包或插入现有包。
 
-需要 Blockbench 桌面版 5.1.5 或更高版本。生成的资源包和数据包面向 Minecraft Java 26.2。
+需要 Blockbench 桌面版 5.1.5 或更高版本。生成的资源包和数据包面向 Minecraft Java 26.2。手臂皮肤目前仅支持 Minecraft Java 1.21.11 及以上版本。
 
 [源码与完整文档](https://github.com/rieyi/display-anim-preview) | [报告问题](https://github.com/rieyi/display-anim-preview/issues)`;
 
@@ -96,7 +109,7 @@ Plugin.register("display_anim_preview", {
     : { about: isChineseOnlyBuild() ? ABOUT_ZH : ABOUT_EN }),
   icon: "icon.png",
   tags: ["Minecraft: Java Edition", "Animation", "Exporter"],
-  version: "1.1.0",
+  version: "1.1.2",
   min_version: "5.1.5",
   variant: "desktop",
   creation_date: "2026-08-07",
@@ -109,10 +122,30 @@ Plugin.register("display_anim_preview", {
   },
   onload() {
     registerTranslations();
+    registerHandRigProperties();
     registerDisplayAnimationProperty();
     registerExportAnimationSettingsProperty();
     registerModelFormat();
+    Blockbench.on("new_project", openNewProjectPreview);
     initializePlaybackSync();
+    registerFirstPersonPanel();
+    firstPersonAction = new Action(FIRST_PERSON_ACTION_ID, {
+      name: tr("dap.fp.open"),
+      description: tr("dap.fp.open_desc"),
+      icon: "visibility",
+      category: "animation",
+      condition: () => Modes.selected.id === "animate" && [FORMAT_ID, "java_block_sequence"].includes(Format.id),
+      click: openFirstPersonPanel,
+    });
+    // Persisted toolbar IDs can outlive deleted actions during a hot reload.
+    const firstPersonIndex = Toolbars.timeline.children.findIndex(
+      (item) => (typeof item === "string" ? item : item.id) === FIRST_PERSON_ACTION_ID
+    );
+    Toolbars.timeline.children = Toolbars.timeline.children.filter(
+      (item) => (typeof item === "string" ? item : item.id) !== FIRST_PERSON_ACTION_ID
+    );
+    Toolbars.timeline.add(firstPersonAction, firstPersonIndex < 0 ? undefined : firstPersonIndex);
+    MenuBar.addAction(firstPersonAction, "animation");
 
     openAction = new Action(OPEN_ACTION_ID, {
       name: tr("dap.action.open"),
@@ -145,17 +178,22 @@ Plugin.register("display_anim_preview", {
       category: "animation",
       click: openProjectSettingsDialog,
     });
-    for (const action of [openAction, settingsAction, checkBoundsAction, exportAction]) {
-      for (const path of ["filter", "tools"]) {
-        try {
-          MenuBar.addAction(action, path);
-        } catch (err) {
-          console.warn(`Menu path "${path}" not available, skipping`, err);
-        }
-      }
-    }
+    MenuBar.addAction(exportAction, "file.export");
+    toolsMenu = new Action(TOOLS_MENU_ID, {
+      name: tr("dap.menu.name"),
+      icon: "movie",
+      searchable: false,
+      children: [settingsAction, openAction, firstPersonAction, checkBoundsAction, "_", exportAction],
+    });
+    MenuBar.addAction(toolsMenu, "tools");
   },
   onunload() {
+    Blockbench.removeListener("new_project", openNewProjectPreview);
+    toolsMenu?.delete();
+    toolsMenu = null;
+    firstPersonAction?.delete();
+    firstPersonAction = null;
+    disposeFirstPersonPanel();
     disposeControlPanel();
     disposePlaybackSync();
     disposeProjectSettingsDialog();
@@ -171,5 +209,6 @@ Plugin.register("display_anim_preview", {
     unregisterModelFormat();
     unregisterDisplayAnimationProperty();
     unregisterExportAnimationSettingsProperty();
+    unregisterHandRigProperties();
   },
 });

@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 const modulePath = fileURLToPath(new URL("../src/bake.ts", import.meta.url));
 
 const entry = `
+ globalThis.Canvas={updateAll(){}};
   globalThis.tl = key => key;
 
   if (!Array.prototype.V3_add) {
@@ -49,6 +50,11 @@ const entry = `
       this.rotation = [0, 0, 0];
       this.children = [child];
       this.parent = "root";
+      this.mesh = {
+        updateMatrixWorld() {},
+        matrix: { toArray: () => [1,0,0,0,0,1,0,0,0,0,1,0,Animator.defaultPose ? 0 : Timeline.time * 20,0,0,1] },
+        matrixWorld: { toArray: () => [1,0,0,0,0,1,0,0,0,0,1,0,Animator.defaultPose ? 0 : Timeline.time * 20,0,0,1] }
+      };
       child.parent = this;
     }
     getTypeBehavior(name) {
@@ -148,12 +154,17 @@ const entry = `
     }
   };
   globalThis.Format = { codec };
-  globalThis.Formats = {};
+  // The resolver must ignore the live format's codec (it can resolve to
+  // Codecs.project) and use the real Java block compiler instead.
+  globalThis.Formats = { java_block: { codec } };
   globalThis.Codecs = {};
 
   globalThis.Animator = {
     previewCalls: 0,
+    defaultPose: false,
+    showDefaultPose() { this.defaultPose = true; },
     preview() {
+      this.defaultPose = false;
       this.previewCalls++;
       if (MockGroup.all.length === 0) {
         throw new Error("Cannot read properties of undefined (reading 'fix_rotation')");
@@ -161,7 +172,9 @@ const entry = `
     },
     MolangParser: { parse() { return 1; } }
   };
-  globalThis.Project = { saved: true };
+  globalThis.Project = { saved: true, display_anim_export_settings: {
+    version: 7, handRenderingEnabled: true, handLeftGroupUuid: "bone", handRightGroupUuid: "bone"
+  } };
   globalThis.Blockbench = {
     showMessageBox() {
       throw new Error("rollback integrity warning was displayed");
@@ -246,7 +259,7 @@ const entry = `
       "another true/locked animation remained active while baking the target");
   }
 
-  const parsedFrames = result.frames.map(frame => JSON.parse(frame.json));
+  const parsedFrames = result.frames.map(frame => frame.model);
   parsedFrames.forEach((frame, index) => {
     const expectedX = 1 + index / 20;
     assert(Math.abs(frame.elements[0].from[0] - expectedX) < 1e-9,
@@ -294,6 +307,13 @@ const entry = `
   assert(bakeOnly.frames.length === 1, "range-disabled export skipped the required isolated bake");
   assert(bakeOnly.outOfBounds.length === 0, "range-disabled export still collected coordinate violations");
 
+  const withHands = await bakeFramesAsync(
+    target, 2, 20, { isCancelled: () => false }, undefined, undefined, false, true
+  );
+  assert(withHands.frames.every(frame => frame.hands), "hand matrices were not attached to baked frames");
+  assert(withHands.frames[0].hands.left.matrix[12] === -2 && withHands.frames[1].hands.left.matrix[12] === -1,
+    "absolute hand model-space matrices were not sampled after Animator.preview");
+
   process.stdout.write(JSON.stringify({ frames: result.frames.length, states: observedBakeStates, keyframes: afterKeyframeCount }));
 `;
 
@@ -309,6 +329,7 @@ const output = await build({
   platform: "node",
   format: "esm",
   target: "node20",
+  loader: { ".png": "dataurl" },
   define: {
     __DAP_FORCE_LANGUAGE__: "null",
   },

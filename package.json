@@ -1,6 +1,6 @@
 {
   "name": "display-anim-preview",
-  "version": "1.1.0",
+  "version": "1.1.2",
   "description": "Preview and export frame-baked Minecraft Java item animations from Blockbench.",
   "private": true,
   "license": "UNLICENSED",
@@ -14,7 +14,7 @@
     "build:official": "node esbuild.config.mjs --official --outfile=dist/display_anim_preview.official.js",
     "watch": "node esbuild.config.mjs --watch",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/test-format.mjs && node scripts/test-display-settings.mjs && node scripts/test-playback.mjs && node scripts/test-animation-export-plan.mjs && node scripts/test-export-animation-settings.mjs && node scripts/test-bake-isolation.mjs && node scripts/test-bounds-engine.mjs && node scripts/test-bounds-check-scope.mjs && node scripts/test-resource-pack.mjs && node scripts/test-datapack.mjs && node scripts/test-file-writer.mjs && node scripts/test-i18n.mjs && node scripts/test-export-confirmation.mjs"
+    "test": "node scripts/test-first-person-layout.mjs && node scripts/test-format.mjs && node scripts/test-display-settings.mjs && node scripts/test-playback.mjs && node scripts/test-animation-export-plan.mjs && node scripts/test-export-animation-settings.mjs && node scripts/test-hand-rig.mjs && node scripts/test-bake-isolation.mjs && node scripts/test-bounds-engine.mjs && node scripts/test-bounds-check-scope.mjs && node scripts/test-resource-pack.mjs && node scripts/test-datapack.mjs && node scripts/test-file-writer.mjs && node scripts/test-i18n.mjs && node scripts/test-export-confirmation.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.28.1",

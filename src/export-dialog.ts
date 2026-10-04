@@ -7,11 +7,13 @@ import { buildDatapack, type DatapackOptions } from "./datapack";
 import { configuredDisplayAnimations } from "./display-animation-settings";
 import {
   initialExportSettings,
+  rememberExportSettingsDraft,
   rememberExportSettings,
   type ExportOutputMode,
   type ExportWriteMode,
   type StoredExportAnimationSettings,
 } from "./export-animation-settings";
+import { PREVIEW_TEXTURE_PROPERTY } from "./hand-rig";
 import { EXPORT_NAMESPACE, isSafeProjectName, isValidObjectiveName, isValidPlayingTag, phaseObjectiveFor } from "./export-layout";
 import { previewPacks, writePacks, type WriteTarget } from "./file-writer";
 import { tr } from "./i18n";
@@ -151,8 +153,13 @@ function chooseDestinations(
 
 function describeTextureSizeMismatch(): string | null {
   if (!Project) return null;
+  const previewTextureUuid = (Project.display_anim_export_settings as { handPreviewTextureUuid?: string } | undefined)?.handPreviewTextureUuid;
   const mismatched = Texture.all.filter(
-    (texture) => texture.width !== Project.texture_width || texture.height !== Project.texture_height
+    (texture) => (!previewTextureUuid || texture.uuid !== previewTextureUuid) &&
+      (texture as unknown as Record<string, unknown>)[PREVIEW_TEXTURE_PROPERTY] !== true &&
+      texture.name !== "DAP_Default_Player_Skin.png" &&
+      texture.name !== "missing.png" &&
+      (texture.width !== Project.texture_width || texture.height !== Project.texture_height)
   );
   if (!mismatched.length) return null;
   return tr("dap.export.texture_mismatch", {
@@ -191,8 +198,8 @@ export function confirmWarnings(
         message,
         icon: "warning",
         buttons,
-        confirm: buttons.length - 1,
-        cancel: 0,
+        confirmIndex: buttons.length - 1,
+        cancelIndex: 0,
       },
       (button) => {
         if (boundsAnimationUuid && button === 1) {
@@ -229,8 +236,8 @@ function confirmPreflight(targets: WriteTarget[]): Promise<boolean> {
         message: tr("dap.export.preflight_message", { summary: targetsSummary }),
         icon: "rule",
         buttons: [tr("dap.export.cancel"), tr("dap.export.confirm_write")],
-        confirm: 1,
-        cancel: 0,
+        confirmIndex: 1,
+        cancelIndex: 0,
       },
       (button) => resolve(button === 1)
     );
@@ -243,7 +250,8 @@ async function runExport(form: FormResult, specs: ExportAnimationSpec[], setting
   const packName = form.pack_name.trim();
   const projectName = form.project_name.trim();
   const displayName = form.display_name.trim() || projectName;
-  const baseItem = normalizeItemId(form.base_item);
+  const configuredBaseItem = normalizeItemId(form.base_item);
+  const baseItem = settings.handRenderingEnabled ? "minecraft:player_head" : configuredBaseItem;
   const displayContexts: PackOptions["displayContexts"] = configuredDisplayAnimations().map(
     ({ context, animated }) => ({ context: context.id, animated })
   );
@@ -256,6 +264,9 @@ async function runExport(form: FormResult, specs: ExportAnimationSpec[], setting
   }> = [];
 
   if (includesResource(form.output_mode)) {
+    if (settings.handRenderingEnabled) {
+      rememberExportSettingsDraft(settings);
+    }
     if (!hasAnimatedContext && specs.length > 1) {
       warnings.push({
         title: tr("dap.export.no_animated_context_title"),
@@ -273,7 +284,8 @@ async function runExport(form: FormResult, specs: ExportAnimationSpec[], setting
       frameCounts,
       settings.animationFps,
       settings.exactBoundsOnExport && hasAnimatedContext,
-      settings.exactBoundsOnExport
+      settings.exactBoundsOnExport,
+      settings.handRenderingEnabled
     );
     if (!isolated) {
       Blockbench.showQuickMessage(tr("dap.export.cancelled"), 2500);
@@ -308,6 +320,18 @@ async function runExport(form: FormResult, specs: ExportAnimationSpec[], setting
   } else {
     warnings.push({ title: tr("dap.export.datapack_only_title"), message: tr("dap.export.datapack_only_message") });
   }
+  if (settings.handRenderingEnabled && includesResource(form.output_mode)) {
+    warnings.push({
+      title: tr("dap.export.hand_rendering_warning_title"),
+      message: tr("dap.export.hand_rendering_warning_message"),
+    });
+    if (!includesDatapack(form.output_mode)) {
+      warnings.push({
+        title: tr("dap.export.hand_rendering_resource_only_title"),
+        message: tr("dap.export.hand_rendering_resource_only_message"),
+      });
+    }
+  }
 
   const warningDecision = await confirmWarnings(warnings);
   if (warningDecision === "bounds") {
@@ -334,6 +358,7 @@ async function runExport(form: FormResult, specs: ExportAnimationSpec[], setting
         projectName,
         defaultAnimationKey: defaultSpec.key,
         displayContexts,
+        handRenderingEnabled: settings.handRenderingEnabled,
         description: tr("dap.export.resource_description_multi", {
           name: displayName,
           animations: specs.length,
@@ -353,6 +378,7 @@ async function runExport(form: FormResult, specs: ExportAnimationSpec[], setting
     playingTag: form.playing_tag,
     playbackFps: settings.animationFps,
     debugEnabled: settings.debugEnabled === true,
+    handRenderingEnabled: settings.handRenderingEnabled,
     animations: specs.map((spec) => ({ key: spec.key, displayName: spec.sourceName, frameCount: spec.frameCount })),
     defaultAnimationKey: defaultSpec.key,
     description: tr("dap.export.datapack_description_multi", {
@@ -385,13 +411,18 @@ async function runExport(form: FormResult, specs: ExportAnimationSpec[], setting
     projectName,
     outputMode: form.output_mode,
     writeMode: form.write_mode,
-    baseItem,
+    baseItem: configuredBaseItem,
     displayName,
     frameObjective: form.frame_objective,
     modeObjective: form.mode_objective,
     maxFrameObjective: form.max_frame_objective,
     playingTag: form.playing_tag,
     debugEnabled: settings.debugEnabled === true,
+    handRenderingEnabled: settings.handRenderingEnabled,
+    handRigRootUuid: settings.handRigRootUuid,
+    handLeftGroupUuid: settings.handLeftGroupUuid,
+    handRightGroupUuid: settings.handRightGroupUuid,
+    handPreviewTextureUuid: settings.handPreviewTextureUuid,
     exactBoundsOnExport: settings.exactBoundsOnExport,
     animationFps: settings.animationFps,
     sharedRoot: settings.sharedRoot,
@@ -411,6 +442,9 @@ async function runExport(form: FormResult, specs: ExportAnimationSpec[], setting
   const tipsStatus = tr(settings.debugEnabled === true
     ? "dap.export.developer_tips_enabled"
     : "dap.export.developer_tips_disabled");
+  const handStatus = tr(settings.handRenderingEnabled
+    ? "dap.export.developer_tips_enabled"
+    : "dap.export.developer_tips_disabled");
   Blockbench.showMessageBox({
     title: tr("dap.export.complete"),
     message: `<div style="font-size:16px;font-weight:700;color:#59c36a">✓ ${escapeHtml(tr("dap.export.complete_heading"))}</div>` +
@@ -422,7 +456,8 @@ async function runExport(form: FormResult, specs: ExportAnimationSpec[], setting
       `<div style="margin-top:12px;padding-top:7px;border-top:1px solid var(--color-border)">` +
       `<div style="font-size:15px;font-weight:700;border-left:3px solid var(--color-accent);padding-left:7px;margin-bottom:5px">${escapeHtml(tr("dap.export.developer_info"))}</div>` +
       (itemModel ? `<div>${escapeHtml(itemModel)}</div>` : "") +
-      `<div style="margin-top:3px">${escapeHtml(tr("dap.export.developer_tips_status", { status: tipsStatus }))}</div></div>`,
+      `<div style="margin-top:3px">${escapeHtml(tr("dap.export.developer_tips_status", { status: tipsStatus }))}</div>` +
+      `<div style="margin-top:3px">${escapeHtml(tr("dap.export.hand_rendering_status", { status: handStatus }))}</div></div>`,
     icon: "check_circle",
   });
 }

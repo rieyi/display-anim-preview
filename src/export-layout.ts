@@ -2,6 +2,14 @@
 
 export const EXPORT_NAMESPACE = "jsb";
 
+/** Minecraft items cannot animate faster than the 20 TPS clock. */
+export const MAX_EXPORT_FPS = 20;
+
+/** Inclusive endpoint frame count for an animation length at a given FPS. */
+export function frameCountFor(length: number, fps: number): number {
+  return Math.floor(length * fps) + 1;
+}
+
 export const DISPLAY_CONTEXT_PATHS: Record<string, string> = {
   firstperson_righthand: "fp_r",
   firstperson_lefthand: "fp_l",

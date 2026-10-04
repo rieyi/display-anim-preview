@@ -1,4 +1,4 @@
-/** 仅在当前运行会话内保存的逐工程快速/精确范围检测缓存。 */
+/** Per-project quick/exact bounds cache retained only for the current session. */
 
 import type { OutOfBoundsHit } from "./bake";
 import { getProjectAnimationFps } from "./export-animation-settings";
@@ -74,7 +74,7 @@ function keyframeSnapshot(keyframe: KeyframeInstance): Record<string, unknown> {
     time: keyframe.time,
     channel: keyframe.channel,
     interpolation: keyframe.interpolation,
-    // 运行时 KeyframeDataPoint 会反向引用所属关键帧；这里只保留可序列化的用户数据，避免循环递归。
+    // KeyframeDataPoint refers back to its keyframe; retain serializable user data only.
     data_points: dataPoints,
     easing: value.easing,
     easingArgs: value.easingArgs,
@@ -128,7 +128,11 @@ export function validBoundsDetection(
     record.fingerprint === animationBoundsFingerprint(animation, modelFingerprint) ? record : null;
 }
 
-export function detectionStatus(project: object, animation: Animation): {
+export function detectionStatus(
+  project: object,
+  animation: Animation,
+  modelFingerprint = modelBoundsFingerprint()
+): {
   quick: BoundsDetectionRecord | null;
   exact: BoundsDetectionRecord | null;
   stale: boolean;
@@ -136,7 +140,7 @@ export function detectionStatus(project: object, animation: Animation): {
   const records = projectCache.get(project);
   const quickStored = records?.get(cacheKey("quick", animation.uuid)) ?? null;
   const exactStored = records?.get(cacheKey("exact", animation.uuid)) ?? null;
-  const fingerprint = animationBoundsFingerprint(animation);
+  const fingerprint = animationBoundsFingerprint(animation, modelFingerprint);
   const quick = quickStored?.fingerprint === fingerprint ? quickStored : null;
   const exact = exactStored?.fingerprint === fingerprint ? exactStored : null;
   return { quick, exact, stale: Boolean((quickStored || exactStored) && !quick && !exact) };

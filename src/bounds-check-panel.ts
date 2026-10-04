@@ -1,6 +1,6 @@
-/** 支持缓存、进度和取消的可停靠快速/精确模型范围检测器。 */
+/** Dockable quick/exact bounds inspector with caching, progress, and cancellation. */
 
-import { rememberBoundsDetection, validBoundsDetection, type BoundsCheckMode, type BoundsDetectionRecord } from "./bounds-cache";
+import { rememberBoundsDetection, validBoundsDetection, modelBoundsFingerprint, type BoundsCheckMode, type BoundsDetectionRecord } from "./bounds-cache";
 import { summarizeOutOfBoundsByFrame } from "./bounds-report";
 import { BoundsTaskCancelledError, type BoundsProgress, type BoundsTaskControl } from "./bounds-task";
 import type { OutOfBoundsHit } from "./bake";
@@ -9,6 +9,7 @@ import { tr } from "./i18n";
 import { runQuickBoundsScan } from "./math-bounds";
 import { waitForUndoIdle } from "./undo-idle";
 import { getProjectAnimationFps } from "./export-animation-settings";
+import { el, escapeHtml } from "./ui-dom";
 
 let panel: Panel | null = null;
 let content: HTMLElementLike | null = null;
@@ -68,18 +69,6 @@ function restoreBoundsSourceState(state: BoundsSourceState, restoreMode: boolean
   Project.saved = state.saved;
 }
 
-function el(tag: string, text?: string): HTMLElementLike {
-  const node = document.createElement(tag);
-  if (text !== undefined) node.innerText = text;
-  return node;
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (character) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  }[character]!));
-}
-
 function modeLabel(mode: BoundsCheckMode): string {
   return tr(mode === "quick" ? "dap.bounds.mode.quick" : "dap.bounds.mode.exact");
 }
@@ -137,34 +126,53 @@ function passedMessage(animations: number, frames: number, mode: BoundsCheckMode
   });
 }
 
+interface ProgressView {
+  shell: HTMLElementLike;
+  title: HTMLElementLike;
+  detail: HTMLElementLike;
+  bar: HTMLElementLike;
+}
+
+let progressView: ProgressView | null = null;
+
 function renderProgress(progress?: BoundsProgress): void {
   if (!content) return;
-  content.innerHTML = "";
-  const shell = el("div");
-  shell.style.padding = "14px 10px";
-  const title = el("div", progress
+  // Rebuild the progress DOM only when it is missing or was cleared by a
+  // results render; per-frame updates only touch text nodes and the bar width.
+  if (!progressView || progressView.shell.parentElement !== content) {
+    content.innerHTML = "";
+    progressView = buildProgressView();
+    content.appendChild(progressView.shell);
+  }
+  const view = progressView;
+  view.title.innerText = progress
     ? tr("dap.bounds.progress_title", { mode: progressModeLabelOverride ?? modeLabel(progress.mode), animation: progress.animationName })
-    : tr("dap.bounds.progress_preparing"));
-  title.style.fontWeight = "700";
-  shell.appendChild(title);
-  const detail = el("div", progress ? tr("dap.bounds.progress_frames", {
+    : tr("dap.bounds.progress_preparing");
+  view.detail.innerText = progress ? tr("dap.bounds.progress_frames", {
     frame: progress.animationFrame, frames: progress.animationFrames,
     completed: progress.completedFrames, total: progress.totalFrames,
-  }) : "");
+  }) : "";
+  view.bar.style.width = progress && progress.totalFrames
+    ? `${Math.min(100, progress.completedFrames / progress.totalFrames * 100).toFixed(1)}%` : "0%";
+}
+
+function buildProgressView(): ProgressView {
+  const shell = el("div");
+  shell.style.padding = "14px 10px";
+  const title = el("div");
+  title.style.fontWeight = "700";
+  const detail = el("div", "");
   detail.style.marginTop = "7px";
   detail.style.color = "var(--color-subtle_text)";
-  shell.appendChild(detail);
   const track = el("div");
   track.style.height = "8px";
   track.style.marginTop = "12px";
   track.style.background = "var(--color-back)";
   const bar = el("div");
   bar.style.height = "100%";
-  bar.style.width = progress && progress.totalFrames
-    ? `${Math.min(100, progress.completedFrames / progress.totalFrames * 100).toFixed(1)}%` : "0%";
+  bar.style.width = "0%";
   bar.style.background = "var(--color-accent)";
   track.appendChild(bar);
-  shell.appendChild(track);
   const cancel = el("button", tr("dap.bounds.cancel"));
   cancel.style.width = "100%";
   cancel.style.marginTop = "14px";
@@ -174,13 +182,17 @@ function renderProgress(progress?: BoundsProgress): void {
     cancel.innerText = tr("dap.bounds.cancelling");
     (cancel as unknown as { disabled: boolean }).disabled = true;
   };
+  shell.appendChild(title);
+  shell.appendChild(detail);
+  shell.appendChild(track);
   shell.appendChild(cancel);
-  content.appendChild(shell);
+  return { shell, title, detail, bar };
 }
 
 function renderExportBakeComplete(animations: number, frames: number): void {
   if (!content) return;
   content.innerHTML = "";
+  progressView = null;
   const shell = el("div");
   shell.style.padding = "14px 10px";
   shell.style.borderLeft = "3px solid #59c36a";
@@ -199,6 +211,7 @@ function renderExportBakeComplete(animations: number, frames: number): void {
 function renderResults(results: AnimationCheckResult[]): void {
   if (!content) return;
   content.innerHTML = "";
+  progressView = null;
   const problemFrames = results.reduce((sum, result) => sum + new Set(result.hits.map((hit) => hit.frame)).size, 0);
   const mode = results[0]?.mode ?? checkedMode;
   const cachedCount = results.filter((result) => result.cached).length;
@@ -216,7 +229,7 @@ function renderResults(results: AnimationCheckResult[]): void {
   header.appendChild(summary);
   if (cachedCount) {
     const reused = el("div", tr("dap.bounds.cache_reused", { animations: cachedCount }));
-    reused.style.fontSize = "11px";
+    reused.style.fontSize = "inherit";
     reused.style.marginTop = "3px";
     reused.style.color = "var(--color-subtle_text)";
     header.appendChild(reused);
@@ -225,7 +238,7 @@ function renderResults(results: AnimationCheckResult[]): void {
   if (problemFrames) {
     const hint = el("div", tr("dap.bounds.panel_hint"));
     hint.style.color = "var(--color-subtle_text)";
-    hint.style.fontSize = "11px";
+    hint.style.fontSize = "inherit";
     hint.style.padding = "8px 2px 6px";
     content.appendChild(hint);
   }
@@ -242,7 +255,7 @@ function renderResults(results: AnimationCheckResult[]): void {
       ? tr("dap.bounds.animation_failed", { frames: new Set(result.hits.map((hit) => hit.frame)).size })
       : tr("dap.bounds.animation_passed", { frames: result.frames }));
     animationStatus.style.color = result.hits.length ? "#e25d68" : "#59c36a";
-    animationStatus.style.fontSize = "11px";
+    animationStatus.style.fontSize = "inherit";
     animationHeader.appendChild(animationName);
     animationHeader.appendChild(animationStatus);
     content.appendChild(animationHeader);
@@ -261,7 +274,7 @@ function renderResults(results: AnimationCheckResult[]): void {
       row.style.lineHeight = "1.35";
       row.style.minHeight = "58px";
       row.innerHTML = `<b style="color:#e25d68">${escapeHtml(tr("dap.export.locate_frame", { frame: item.frame }))}</b>` +
-        `<div style="font-size:11px;color:var(--color-subtle_text);margin-top:3px;white-space:normal">${escapeHtml(item.description)}</div>`;
+        `<div style="font-size:inherit;color:var(--color-subtle_text);margin-top:3px;white-space:normal">${escapeHtml(item.description)}</div>`;
       const frameHits = result.hits.filter((hit) => hit.frame === item.frame);
       row.onclick = () => locateFrame(result.animation, item.frame, frameHits);
       content.appendChild(row);
@@ -296,6 +309,21 @@ function recordsToResults(animations: Animation[], records: BoundsDetectionRecor
   });
 }
 
+/** Shared per-scan progress renderer for quick and exact scans. */
+function createBoundsProgressControl(): BoundsTaskControl {
+  return {
+    isCancelled: () => activeCancellation?.cancelled === true,
+    onProgress: (progress) => {
+      renderProgress(progress);
+      Blockbench.setProgress(progress.totalFrames ? progress.completedFrames / progress.totalFrames : 0);
+      Blockbench.setStatusBarText(tr("dap.bounds.progress_status", {
+        mode: progressModeLabelOverride ?? modeLabel(progress.mode), animation: progress.animationName,
+        frame: progress.animationFrame, frames: progress.animationFrames,
+      }));
+    },
+  };
+}
+
 async function performBoundsCheck(
   animationUuids: string[], mode: BoundsCheckMode, project: object, sourceState: BoundsSourceState
 ): Promise<void> {
@@ -308,9 +336,12 @@ async function performBoundsCheck(
   }
   checkedMode = mode;
   openBoundsCheckPanel();
+  // One fingerprint covers every animation; per-animation calls would each
+  // rescan the whole model.
+  const modelFingerprint = modelBoundsFingerprint();
   const cached = new Map<string, BoundsDetectionRecord>();
   for (const animation of animations) {
-    const record = validBoundsDetection(project, animation, mode);
+    const record = validBoundsDetection(project, animation, mode, modelFingerprint);
     if (record) cached.set(animation.uuid, record);
   }
   const pending = animations.filter((animation) => !cached.has(animation.uuid));
@@ -321,17 +352,7 @@ async function performBoundsCheck(
   }
   activeCancellation = { cancelled: false };
   renderProgress();
-  const control: BoundsTaskControl = {
-    isCancelled: () => activeCancellation?.cancelled === true,
-    onProgress: (progress) => {
-      renderProgress(progress);
-      Blockbench.setProgress(progress.totalFrames ? progress.completedFrames / progress.totalFrames : 0);
-      Blockbench.setStatusBarText(tr("dap.bounds.progress_status", {
-        mode: progressModeLabelOverride ?? modeLabel(progress.mode), animation: progress.animationName,
-        frame: progress.animationFrame, frames: progress.animationFrames,
-      }));
-    },
-  };
+  const control = createBoundsProgressControl();
   const scanned = mode === "quick"
     ? await runQuickBoundsScan(pending, control)
     : (await runExactBoundsScan(pending, control)).records;
@@ -342,7 +363,7 @@ async function performBoundsCheck(
     passedMessage(animations.length, results.reduce((sum, result) => sum + result.frames, 0), mode);
   }
   } finally {
-    // 结果面板继续显示在动画模式，但动画选择、播放和时间恢复为检测前状态。
+    // Keep results visible in Animate mode while restoring selection, playback, and time.
     restoreBoundsSourceState(sourceState, false);
   }
 }
@@ -353,8 +374,8 @@ function chooseBoundsMode(animations: Animation[]): void {
     message: tr("dap.bounds.choose_message"),
     icon: "settings_overscan",
     buttons: [tr("dap.bounds.choose_cancel"), tr("dap.bounds.mode.quick"), tr("dap.bounds.mode.exact")],
-    confirm: 2,
-    cancel: 0,
+    confirmIndex: 2,
+    cancelIndex: 0,
   }, (button) => {
     if (button === 1) runBoundsCheck(animations, "quick");
     if (button === 2) runBoundsCheck(animations, "exact");
@@ -405,14 +426,15 @@ export function runBoundsCheck(preferredAnimations?: Animation[], mode?: BoundsC
   });
 }
 
-/** 在隔离工程中执行资源包烘焙，并提供可取消的精确进度。 */
+/** Bake resource models in an isolated project with cancellable exact progress. */
 export async function runExactBoundsForExport(
   animations: Animation[],
   keysByUuid: ReadonlyMap<string, string>,
   framesByUuid: ReadonlyMap<string, number>,
   samplingFps: number,
   rememberResults: boolean,
-  showResults: boolean
+  showResults: boolean,
+  captureHands = false
 ): Promise<ExactBoundsScanResult | null> {
   if (boundsCheckBusy) throw new Error(tr("dap.bounds.check_in_progress"));
   const sourceProject = Project as unknown as object;
@@ -426,19 +448,9 @@ export async function runExactBoundsForExport(
     openBoundsCheckPanel();
     checkedMode = "exact";
     renderProgress();
-    const control: BoundsTaskControl = {
-      isCancelled: () => activeCancellation?.cancelled === true,
-      onProgress: (progress) => {
-        renderProgress(progress);
-        Blockbench.setProgress(progress.totalFrames ? progress.completedFrames / progress.totalFrames : 0);
-        Blockbench.setStatusBarText(tr("dap.bounds.progress_status", {
-          mode: progressModeLabelOverride ?? modeLabel(progress.mode), animation: progress.animationName,
-          frame: progress.animationFrame, frames: progress.animationFrames,
-        }));
-      },
-    };
+    const control = createBoundsProgressControl();
     const collectBounds = rememberResults || showResults;
-    const result = await runExactBoundsScan(animations, control, keysByUuid, framesByUuid, samplingFps, collectBounds);
+    const result = await runExactBoundsScan(animations, control, keysByUuid, framesByUuid, samplingFps, collectBounds, captureHands);
     if (rememberResults) {
       for (const record of result.records) rememberBoundsDetection(sourceProject, record);
     }
@@ -515,8 +527,12 @@ export function openBoundsCheckPanel(): void {
 }
 
 export function disposeBoundsCheckPanel(): void {
+  // Cancel any in-flight scan so its finally block stops instead of touching
+  // global UI after the plugin has been unloaded.
+  if (activeCancellation) activeCancellation.cancelled = true;
   activeCancellation = null;
   progressModeLabelOverride = null;
+  progressView = null;
   exportBakeOnly = false;
   panel?.delete();
   panel = null;

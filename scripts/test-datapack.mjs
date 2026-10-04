@@ -1,4 +1,4 @@
-import { build } from "esbuild";
+import { importTestBundle } from "./lib/test-bundle.mjs";
 import { fileURLToPath } from "node:url";
 const modulePath=fileURLToPath(new URL("../src/datapack.ts",import.meta.url));
 const entry=`
@@ -24,6 +24,7 @@ const entry=`
   has(root+"give.mcfunction",'strings:["reload"],floats:[0.0]');
   has(root+"give.mcfunction",'minecraft:max_stack_size=1');
   has(root+"give.mcfunction",'minecraft:custom_data={jsb:{project:"resin_gun",animation:"reload",frame:0,mode:0,max:2,phase:0}}');
+  assert(!by.has("data/jsb/loot_table/resin_gun/give.json"),"disabled hand rendering wrote a loot table");
   has(root+"give.mcfunction",'/function jsb:resin_gun/play/<animation>');
   has(root+"give.mcfunction",'/function jsb:resin_gun/stop');
   has(root+"play.mcfunction",'$function jsb:resin_gun/_internal/play/$(animation)/$(mode)');
@@ -33,8 +34,32 @@ const entry=`
   has(root+"loop/fire.mcfunction",'function jsb:resin_gun/play {animation:"fire",mode:"loop"}');
   has(root+"frame/fire.mcfunction",'$function jsb:resin_gun/frame {animation:"fire",frame:$(frame)}');
   const quietFiles=new Map(buildDatapack({...options,debugEnabled:false}).map(f=>[f.path,f.content]));
-  assert(!quietFiles.get(root+"load.mcfunction").includes("tellraw"),"developer tips off still emits a load message");
-  assert(!quietFiles.get(root+"give.mcfunction").includes("tellraw"),"developer tips off still emits an item-give message");
+  for(const [path,content] of quietFiles)
+    assert(!content.includes("tellraw"),"developer tips off still emits a message in "+path);
+  assert(quietFiles.get(root+"_internal/error/invalid_animation.mcfunction").includes("return 0"),"silent error function must keep the return-0 control flow");
+  assert(quietFiles.get(root+"_internal/error/invalid_mode.mcfunction").includes("return 0"),"silent error function must keep the return-0 control flow");
+  assert(quietFiles.get(root+"play.mcfunction").includes("unless items entity @s weapon.mainhand"),"silent play must keep the hold-check guard");
+  assert(quietFiles.get(root+"stop.mcfunction").includes("return 0"),"silent stop must keep the hold-check guard");
+  const loudPlay=by.get(root+"play.mcfunction");
+  assert(loudPlay.includes("tellraw"),"developer tips on should keep the hold-item hint");
+  const handFiles=new Map(buildDatapack({...options,baseItem:"minecraft:stick",handRenderingEnabled:true}).map(f=>[f.path,f.content]));
+  assert(handFiles.get(root+"give.mcfunction").includes("loot give @s loot jsb:resin_gun/give"),
+    "hand rendering give does not use the profile-aware loot table");
+  assert(!handFiles.get(root+"give.mcfunction").includes("give @s minecraft:stick"),
+    "hand rendering did not force the player-head carrier");
+  const handLoot=JSON.parse(handFiles.get("data/jsb/loot_table/resin_gun/give.json"));
+  const handEntry=handLoot.pools[0].entries[0];
+  assert(handLoot.type==="minecraft:command"&&handEntry.name==="minecraft:player_head",
+    "hand loot table is not a command-context player head");
+  assert(handEntry.functions[0].function==="minecraft:set_components"&&
+    handEntry.functions[1].function==="minecraft:fill_player_head"&&handEntry.functions[1].entity==="this",
+    "hand loot table does not fill the executor profile after components");
+  const handComponents=handEntry.functions[0].components;
+  assert(handComponents["minecraft:item_model"]==="jsb:resin_gun"&&
+    handComponents["minecraft:custom_model_data"].strings[0]==="reload"&&
+    handComponents["minecraft:custom_data"].jsb.max===2&&
+    handComponents["minecraft:max_stack_size"]===1,
+    "hand player-head carrier lost animation components");
   has(root+"_internal/play/reload/once.mcfunction","scoreboard players set @s jsb_x 2");
   has(root+"_internal/play/fire/loop.mcfunction","scoreboard players set @s jsb_x 5");
   has(root+"_internal/play/reload/once.mcfunction","scoreboard players set @s jsb_f 1");
@@ -87,5 +112,4 @@ const entry=`
   assert(rejected===7,"invalid datapack metadata was accepted");
   process.stdout.write(JSON.stringify({files:files.length,animations:2}));
 `;
-const output=await build({stdin:{contents:entry,resolveDir:process.cwd(),sourcefile:"datapack-test.ts",loader:"ts"},bundle:true,write:false,platform:"node",format:"esm",target:"node20",define:{__DAP_FORCE_LANGUAGE__:"null"}});
-await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].contents).toString("base64")}`);
+await importTestBundle(entry, { sourcefile: "datapack-test.ts", define: {__DAP_FORCE_LANGUAGE__:"null"} });

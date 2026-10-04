@@ -1,4 +1,4 @@
-import { build } from "esbuild";
+import { importTestBundle } from "./lib/test-bundle.mjs";
 import { fileURLToPath } from "node:url";
 
 const modulePath = fileURLToPath(new URL("../src/bounds-check-panel.ts", import.meta.url));
@@ -12,9 +12,10 @@ const entry = `
   globalThis.document = { activeElement: { blur() {} } };
   globalThis.Undo = { current_save: null };
   let modeDialogCount = 0;
+  let shown = null;
   globalThis.Blockbench = {
     showQuickMessage() {},
-    showMessageBox() { modeDialogCount++; },
+    showMessageBox(options, callback) { modeDialogCount++; shown = { options, callback }; },
   };
   globalThis.setTimeout = callback => { timers.push(callback); return timers.length; };
   const { resolveBoundsCheckAnimations, runBoundsCheck } = await import(${JSON.stringify(modulePath)});
@@ -33,23 +34,17 @@ const entry = `
     throw new Error("recheck did not resolve the current animation list");
   }
   runBoundsCheck();
+  if (!shown || shown.options.confirmIndex !== 2) throw new Error("exact confirmation index changed");
+  shown.callback(shown.options.cancelIndex ?? shown.options.buttons.length - 1);
+  if (timers.length !== 0) throw new Error("native close/Escape started a bounds scan");
   runBoundsCheck();
+  shown.callback(0);
   if (modeDialogCount !== 2 || timers.length !== 0) {
     throw new Error("mode selection should not start scanning before the user chooses a mode");
   }
 `;
 
-const output = await build({
-  stdin: { contents: entry, resolveDir: process.cwd(), sourcefile: "bounds-check-scope-test.ts", loader: "ts" },
-  bundle: true,
-  write: false,
-  platform: "node",
-  format: "esm",
-  target: "node20",
-  define: { __DAP_FORCE_LANGUAGE__: "null" },
-});
-
-await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].contents).toString("base64")}`);
+await importTestBundle(entry, { sourcefile: "bounds-check-scope-test.ts", define: { __DAP_FORCE_LANGUAGE__: "null" } });
 
 const undoIdlePath = fileURLToPath(new URL("../src/undo-idle.ts", import.meta.url));
 const undoIdleEntry = `
@@ -66,13 +61,4 @@ const undoIdleEntry = `
   if (!(await waiting)) throw new Error("Undo-idle wait did not continue after the transaction committed");
 `;
 
-const undoIdleOutput = await build({
-  stdin: { contents: undoIdleEntry, resolveDir: process.cwd(), sourcefile: "undo-idle-test.ts", loader: "ts" },
-  bundle: true,
-  write: false,
-  platform: "node",
-  format: "esm",
-  target: "node20",
-});
-
-await import(`data:text/javascript;base64,${Buffer.from(undoIdleOutput.outputFiles[0].contents).toString("base64")}`);
+await importTestBundle(undoIdleEntry, { sourcefile: "undo-idle-test.ts" });

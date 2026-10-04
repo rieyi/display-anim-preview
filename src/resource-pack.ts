@@ -2,6 +2,13 @@
 
 import type { BakedFrame } from "./bake";
 import { DISPLAY_CONTEXT_PATHS, EXPORT_NAMESPACE } from "./export-layout";
+import {
+  handBaseModel,
+  handRenderingFiles,
+  playerSkinHands,
+  type HandBasePaths,
+} from "./hand-rendering";
+import { PREVIEW_TEXTURE_PROPERTY } from "./hand-rig";
 import { tr } from "./i18n";
 
 const RESOURCE_PACK_FORMAT: [number, number] = [88, 0];
@@ -12,6 +19,7 @@ export interface PackOptions {
   description: string;
   defaultAnimationKey: string;
   displayContexts: PackDisplayContext[];
+  handRenderingEnabled?: boolean;
 }
 
 export interface PackAnimationSequence {
@@ -34,6 +42,7 @@ export interface PackBuildReport {
   omittedUntexturedFaces: number;
   omittedEmptyElements: number;
   animatedContextFolders: string[];
+  handRenderingEnabled: boolean;
   animations: PackAnimationReport[];
 }
 
@@ -66,6 +75,7 @@ interface SequenceModelPaths {
   key: string;
   sourceName: string;
   modelPaths: string[];
+  handBasePaths: Array<HandBasePaths | undefined>;
 }
 
 function json(value: unknown): string {
@@ -83,7 +93,15 @@ function sanitizeTextureName(name: string, fallbackIndex: number): string {
 
 function collectTextures(): ExportTexture[] {
   const used = new Set<string>();
-  return Texture.all.map((texture, index) => {
+  const previewTextureUuid = typeof Project === "undefined"
+    ? undefined
+    : (Project?.display_anim_export_settings as { handPreviewTextureUuid?: string } | undefined)?.handPreviewTextureUuid;
+  return Texture.all.filter((texture) =>
+    (!previewTextureUuid || texture.uuid !== previewTextureUuid) &&
+    (texture as unknown as Record<string, unknown>)[PREVIEW_TEXTURE_PROPERTY] !== true &&
+    texture.name !== "DAP_Default_Player_Skin.png" &&
+    texture.name !== "missing.png"
+  ).map((texture, index) => {
     const base = sanitizeTextureName(texture.name, index);
     let name = base;
     let suffix = 2;
@@ -98,13 +116,16 @@ function collectTextures(): ExportTexture[] {
   });
 }
 
+/**
+ * Rewrites raw texture references onto the generated jsb texture paths.
+ * Mutates `model.textures` in place; the input frame model is single-use.
+ */
 function rewriteTextureRefs(
-  frameJson: string,
+  model: { textures?: Record<string, string> },
   projectName: string,
   textures: ExportTexture[]
-): string {
-  const model = JSON.parse(frameJson) as { textures?: Record<string, string> };
-  if (!model.textures) return JSON.stringify(model);
+): void {
+  if (!model.textures) return;
 
   for (const key of Object.keys(model.textures)) {
     const value = model.textures[key];
@@ -125,18 +146,16 @@ function rewriteTextureRefs(
     );
     if (firstTextureKey) model.textures.particle = `#${firstTextureKey}`;
   }
-  return JSON.stringify(model);
 }
 
 function sanitizeTextureRefs(
-  frameJson: string,
-  projectName: string,
-  textureNames: Set<string>
-): { json: string; omittedFaces: number; omittedElements: number } {
-  const model = JSON.parse(frameJson) as {
+  model: {
     textures?: Record<string, string>;
     elements?: Array<{ name?: string; faces?: Record<string, { texture?: string }> }>;
-  };
+  },
+  projectName: string,
+  textureNames: Set<string>
+): { omittedFaces: number; omittedElements: number } {
   const prefix = `${EXPORT_NAMESPACE}:item/${projectName}/`;
   const textures = model.textures ?? {};
   let omittedFaces = 0;
@@ -186,28 +205,35 @@ function sanitizeTextureRefs(
       return false;
     });
   }
-  return { json: JSON.stringify(model), omittedFaces, omittedElements };
+  return { omittedFaces, omittedElements };
 }
 
-function animatedModel(modelPaths: string[]): unknown {
-  if ([...new Set(modelPaths)].length === 1) {
-    return { type: "minecraft:model", model: modelPaths[0] };
+function animatedModel(sequence: SequenceModelPaths, projectName: string, includeHands: boolean): unknown {
+  const frameModel = (frame: number): unknown => {
+    const model = { type: "minecraft:model", model: sequence.modelPaths[frame] };
+    return includeHands ? playerSkinHands(model, projectName, sequence.handBasePaths[frame]) : model;
+  };
+  if ([...new Set(sequence.modelPaths)].length === 1 &&
+      (!includeHands || sequence.handBasePaths.every((paths) => JSON.stringify(paths) === JSON.stringify(sequence.handBasePaths[0])))) {
+    return frameModel(0);
   }
   return {
     type: "minecraft:range_dispatch",
     property: "minecraft:custom_model_data",
     index: 0,
-    fallback: { type: "minecraft:model", model: modelPaths[0] },
-    entries: modelPaths.map((model, frame) => ({
+    fallback: frameModel(0),
+    entries: sequence.modelPaths.map((_model, frame) => ({
       threshold: frame,
-      model: { type: "minecraft:model", model },
+      model: frameModel(frame),
     })),
   };
 }
 
 function selectableAnimationModel(
   sequences: SequenceModelPaths[],
-  defaultAnimationKey: string
+  defaultAnimationKey: string,
+  projectName: string,
+  includeHands: boolean
 ): unknown {
   const fallback = sequences.find((sequence) => sequence.key === defaultAnimationKey);
   if (!fallback) throw new Error(`Unknown default animation key: ${defaultAnimationKey}`);
@@ -217,27 +243,35 @@ function selectableAnimationModel(
     index: 0,
     cases: sequences.map((sequence) => ({
       when: sequence.key,
-      model: animatedModel(sequence.modelPaths),
+      model: animatedModel(sequence, projectName, includeHands),
     })),
-    fallback: animatedModel(fallback.modelPaths),
+    fallback: animatedModel(fallback, projectName, includeHands),
   };
 }
 
 function buildItemDefinition(
   options: PackOptions,
   staticModelPath: string,
-  contextSequences: Map<string, SequenceModelPaths[]>
+  contextSequences: Map<string, SequenceModelPaths[]>,
+  defaultHandBases?: HandBasePaths
 ): string {
   const staticModel = { type: "minecraft:model", model: staticModelPath };
-  const cases = options.displayContexts.map((route) => ({
-    when: route.context,
-    model: route.animated
+  const cases = options.displayContexts.map((route) => {
+    const includeHands = options.handRenderingEnabled === true &&
+      (route.context === "firstperson_righthand" || route.context === "firstperson_lefthand");
+    const routedModel = route.animated
       ? selectableAnimationModel(
           contextSequences.get(route.context) ?? [],
-          options.defaultAnimationKey
+          options.defaultAnimationKey,
+          options.projectName,
+          includeHands
         )
-      : staticModel,
-  }));
+      : includeHands ? playerSkinHands(staticModel, options.projectName, defaultHandBases) : staticModel;
+    return {
+      when: route.context,
+      model: routedModel,
+    };
+  });
   return json({
     model: {
       type: "minecraft:select",
@@ -279,6 +313,7 @@ export function buildResourcePack(
   let modelBytesAfter = 0;
   let omittedUntexturedFaces = 0;
   let omittedEmptyElements = 0;
+  let particleTexture = "minecraft:block/white_concrete";
 
   files.push({
     path: "pack.mcmeta",
@@ -290,26 +325,56 @@ export function buildResourcePack(
       },
     }),
   });
+  if (options.handRenderingEnabled) {
+    particleTexture = textures[0]
+      ? `${EXPORT_NAMESPACE}:item/${options.projectName}/${textures[0].name}`
+      : "minecraft:block/white_concrete";
+    files.push(...handRenderingFiles(options.projectName, particleTexture));
+  }
+
+  const handModelPaths = new Map<string, HandBasePaths>();
+  const resolveHandBasePaths = (frame?: BakedFrame): HandBasePaths | undefined => {
+    if (!options.handRenderingEnabled || !frame?.hands) return undefined;
+    const key = JSON.stringify([frame.hands, frame.model.display]);
+    const cached = handModelPaths.get(key);
+    if (cached) return cached;
+    const index = handModelPaths.size;
+    const paths: HandBasePaths = {
+      left: `${EXPORT_NAMESPACE}:${options.projectName}/_hand/_generated/left_${index}`,
+      right: `${EXPORT_NAMESPACE}:${options.projectName}/_hand/_generated/right_${index}`,
+    };
+    for (const side of ["left", "right"] as const) {
+      files.push({
+        path: `${modelRoot}/_hand/_generated/${side}_${index}.json`,
+        content: json(handBaseModel(side, particleTexture, frame.hands[side], (frame.model.display ?? {}) as Parameters<typeof handBaseModel>[3])),
+      });
+    }
+    handModelPaths.set(key, paths);
+    return paths;
+  };
 
   for (const sequence of sequences) {
     const paths: string[] = [];
     for (const frame of sequence.frames) {
-      const rewritten = rewriteTextureRefs(frame.json, options.projectName, textures);
-      const sanitized = sanitizeTextureRefs(rewritten, options.projectName, textureNames);
+      rewriteTextureRefs(frame.model, options.projectName, textures);
+      const sanitized = sanitizeTextureRefs(frame.model, options.projectName, textureNames);
       omittedUntexturedFaces += sanitized.omittedFaces;
       omittedEmptyElements += sanitized.omittedElements;
+      // Serialize once: the canonical string is the dedup key, the byte count,
+      // and the written file content.
+      const finalJson = JSON.stringify(frame.model);
       sampledFrames++;
-      modelBytesBefore += sanitized.json.length;
+      modelBytesBefore += finalJson.length;
 
-      let modelPath = uniqueModels.get(sanitized.json);
+      let modelPath = uniqueModels.get(finalJson);
       if (!modelPath) {
         const index = uniqueModels.size;
         modelPath = `${EXPORT_NAMESPACE}:${options.projectName}/_generated/model_${index}`;
-        uniqueModels.set(sanitized.json, modelPath);
-        modelBytesAfter += sanitized.json.length;
+        uniqueModels.set(finalJson, modelPath);
+        modelBytesAfter += finalJson.length;
         files.push({
           path: `${modelRoot}/_generated/model_${index}.json`,
-          content: `${sanitized.json}\n`,
+          content: `${finalJson}\n`,
         });
       }
       paths.push(modelPath);
@@ -341,6 +406,7 @@ export function buildResourcePack(
         key: sequence.key,
         sourceName: sequence.sourceName,
         modelPaths: aliases,
+        handBasePaths: sequence.frames.map((frame) => resolveHandBasePaths(frame)),
       });
     }
     contextSequences.set(route.context, routedSequences);
@@ -350,7 +416,14 @@ export function buildResourcePack(
   if (!defaultPath) throw new Error(tr("dap.error.no_models"));
   files.push({
     path: `${assetRoot}/items/${options.projectName}.json`,
-    content: buildItemDefinition(options, defaultPath, contextSequences),
+    content: buildItemDefinition(
+      options,
+      defaultPath,
+      contextSequences,
+      resolveHandBasePaths(
+        sequences.find((sequence) => sequence.key === options.defaultAnimationKey)?.frames[0]
+      )
+    ),
   });
   for (const texture of textures) {
     files.push({
@@ -371,6 +444,7 @@ export function buildResourcePack(
       omittedUntexturedFaces,
       omittedEmptyElements,
       animatedContextFolders,
+      handRenderingEnabled: options.handRenderingEnabled === true,
       animations: sequences.map((sequence) => ({
         key: sequence.key,
         sourceName: sequence.sourceName,

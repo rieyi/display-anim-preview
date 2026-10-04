@@ -1,4 +1,4 @@
-import { build } from "esbuild";
+import { importTestBundle } from "./lib/test-bundle.mjs";
 import { fileURLToPath } from "node:url";
 
 const entry = `
@@ -51,20 +51,4 @@ const entry = `
   process.stdout.write(serialized);
 `;
 
-const output = await build({
-  stdin: {
-    contents: entry,
-    resolveDir: process.cwd(),
-    sourcefile: "display-settings-test.ts",
-    loader: "ts",
-  },
-  bundle: true,
-  write: false,
-  platform: "node",
-  format: "esm",
-  target: "node20",
-});
-
-await import(
-  `data:text/javascript;base64,${Buffer.from(output.outputFiles[0].contents).toString("base64")}`
-);
+await importTestBundle(entry, { sourcefile: "display-settings-test.ts" });

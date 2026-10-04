@@ -16,6 +16,7 @@ let playbackIntent = false;
 let pauseResolutionToken = 0;
 let lastPlaybackTime = 0;
 let lastPlaybackAnimationUuid = "";
+let originalLoopToggleValue: boolean | null = null;
 
 function firstMinecraftFrameTime(animation: Animation): number {
   return Math.min(1 / getProjectAnimationFps(), animation.length);
@@ -160,14 +161,7 @@ function handleDisplayFrame(): void {
     Timeline.playing &&
     Math.abs(displayTime - rawTime) > 1e-8
   ) {
-    quantizedPreviewInProgress = true;
-    try {
-      Timeline.time = displayTime;
-      Animator.preview(true);
-    } finally {
-      Timeline.time = rawTime;
-      quantizedPreviewInProgress = false;
-    }
+    renderAtTimePreservingClock(displayTime);
   }
   onTick(displayTime, animation.length, Timeline.playing);
 }
@@ -244,6 +238,9 @@ export function initializePlaybackSync(): void {
   Blockbench.on("select_animation", handleAnimationSelect);
   listenersRegistered = true;
   previewLooping = false;
+  // Reset the official loop toggle for a clean start, but remember the user's
+  // value so unloading the plugin restores it.
+  originalLoopToggleValue = BarItems.looped_animation_playback.value;
   BarItems.looped_animation_playback.set(false);
   syncPreviewPlaybackDriver();
 }
@@ -258,6 +255,10 @@ export function disposePlaybackSync(): void {
   stopPreviewPlaybackDriver();
   listenersRegistered = false;
   onTick = () => {};
+  if (originalLoopToggleValue !== null) {
+    BarItems.looped_animation_playback.set(originalLoopToggleValue);
+    originalLoopToggleValue = null;
+  }
 }
 
 export function isPlaying(): boolean {

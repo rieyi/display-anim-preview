@@ -1,4 +1,4 @@
-/** 在一次性工程中使用 Blockbench Java codec 执行权威范围检测。 */
+/** Run authoritative Java codec bounds checks in a disposable Blockbench project. */
 
 import { animationBoundsFingerprint, modelBoundsFingerprint, type BoundsDetectionRecord } from "./bounds-cache";
 import { type BoundsTaskControl } from "./bounds-task";
@@ -16,7 +16,8 @@ export async function runExactBoundsScan(
   keysByUuid: ReadonlyMap<string, string> = new Map(),
   framesByUuid: ReadonlyMap<string, number> = new Map(),
   samplingFps = 20,
-  collectBounds = true
+  collectBounds = true,
+  captureHands = false
 ): Promise<ExactBoundsScanResult> {
   const modelFingerprint = modelBoundsFingerprint();
   const requested = sourceAnimations.map((animation) => ({
@@ -45,7 +46,7 @@ export async function runExactBoundsScan(
           completedFrames,
           totalFrames,
         });
-      }, undefined, collectBounds);
+      }, undefined, collectBounds, captureHands);
       records.push({
         mode: "exact",
         animationUuid: item.uuid,

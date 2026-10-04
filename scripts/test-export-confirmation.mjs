@@ -44,7 +44,7 @@ const entry = `
   const cancelledPromise = confirmWarnings([
     { title: "Warning", message: "Details" }
   ]);
-  shown.callback(0);
+  shown.callback(shown.options.cancelIndex ?? shown.options.buttons.length - 1);
   if (await cancelledPromise !== "cancel") {
     throw new Error("cancel button did not stop export");
   }
@@ -60,6 +60,9 @@ const entry = `
   }]);
   if (shown.options.buttons.length !== 3 || shown.options.buttons[1] !== "Open Bounds Checker") {
     throw new Error("bounds-check handoff was not offered");
+  }
+  if (shown.options.cancelIndex !== 0 || shown.options.confirmIndex !== 2) {
+    throw new Error("bounds handoff dialog native cancellation/confirmation indices are unsafe");
   }
   shown.callback(1);
   if (await boundsPromise !== "bounds") {
@@ -79,6 +82,7 @@ const output = await build({
   platform: "node",
   format: "esm",
   target: "node20",
+  loader: { ".vsh": "text", ".fsh": "text", ".png": "dataurl" },
   define: {
     __DAP_FORCE_LANGUAGE__: "null",
   },

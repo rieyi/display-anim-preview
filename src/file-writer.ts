@@ -1,6 +1,8 @@
 /** Preflights and transactionally writes project-scoped JSB modules into pack folders. */
 
 import type { PackFile } from "./resource-pack";
+import { EXPORT_NAMESPACE } from "./export-layout";
+import { HAND_SHADER_PATHS } from "./hand-rendering";
 import { tr } from "./i18n";
 
 const SHARED_TAGS = new Set([
@@ -83,14 +85,19 @@ function isSafeRelativePath(relativePath: string): boolean {
 }
 
 function isOwnedProjectPath(path: string, project: string): boolean {
+  const ns = EXPORT_NAMESPACE;
   return (
-    path === `assets/jsb/items/${project}.json` ||
-    path.startsWith(`assets/jsb/models/${project}/`) ||
-    path.startsWith(`assets/jsb/textures/item/${project}/`) ||
-    path.startsWith(`data/jsb/function/${project}/`) ||
-    path.startsWith(`data/jsb/item_modifier/${project}/`) ||
-    false
+    path === `assets/${ns}/items/${project}.json` ||
+    path.startsWith(`assets/${ns}/models/${project}/`) ||
+    path.startsWith(`assets/${ns}/textures/item/${project}/`) ||
+    path.startsWith(`data/${ns}/function/${project}/`) ||
+    path.startsWith(`data/${ns}/item_modifier/${project}/`) ||
+    path.startsWith(`data/${ns}/loot_table/${project}/`)
   );
+}
+
+function isManagedProjectPath(path: string, project: string, kind: WriteTarget["kind"]): boolean {
+  return isOwnedProjectPath(path, project) || (kind === "resource" && HAND_SHADER_PATHS.has(path));
 }
 
 function validateGeneratedPath(path: string, target: WriteTarget): void {
@@ -100,7 +107,7 @@ function validateGeneratedPath(path: string, target: WriteTarget): void {
   if (
     path !== "pack.mcmeta" &&
     !SHARED_TAGS.has(path) &&
-    !isOwnedProjectPath(path, target.projectName)
+    !isManagedProjectPath(path, target.projectName, target.kind)
   ) {
     throw new Error(tr("dap.error.unsafe_path", { path }));
   }
@@ -128,7 +135,7 @@ function readManifest(
   }
   for (const [project, entry] of Object.entries(value.projects)) {
     if (!entry || (entry.kind !== "resource" && entry.kind !== "datapack") ||
-      !Array.isArray(entry.files) || entry.files.some((path) => typeof path !== "string" || !isOwnedProjectPath(path, project))) {
+      !Array.isArray(entry.files) || entry.files.some((path) => typeof path !== "string" || !isManagedProjectPath(path, project, entry.kind))) {
       throw new Error(tr("dap.error.manifest_invalid", { path: fullPath }));
     }
   }
@@ -200,18 +207,27 @@ function prepareTarget(target: WriteTarget, fs: NodeFs, pathModule: NodePath): P
   }
 
   const currentOwned = new Set(
-    [...desired.keys()].filter((path) => isOwnedProjectPath(path, target.projectName))
+    [...desired.keys()].filter((path) => isManagedProjectPath(path, target.projectName, target.kind))
   );
-  const stale = [...owned].filter((path) => !currentOwned.has(path));
+  const sharedOwnedByAnotherProject = (path: string): boolean => Object.entries(manifest.projects)
+    .some(([project, entry]) =>
+      project !== target.projectName && entry.kind === "resource" && entry.files.includes(path)
+    );
+  const stale = [...owned].filter((path) =>
+    !currentOwned.has(path) && (!HAND_SHADER_PATHS.has(path) || !sharedOwnedByAnotherProject(path))
+  );
   const conflicts: string[] = [];
   for (const relativePath of currentOwned) {
     const fullPath = pathModule.join(target.root, relativePath);
     if (fs.existsSync(fullPath) && !owned.has(relativePath)) {
-      conflicts.push(fullPath);
+      const generated = desired.get(relativePath);
+      const identicalSharedShader = HAND_SHADER_PATHS.has(relativePath) && generated &&
+        fs.readFileSync(fullPath, "utf8") === generated.content;
+      if (!identicalSharedShader) conflicts.push(fullPath);
     }
   }
   for (const relativePath of stale) {
-    if (!isOwnedProjectPath(relativePath, target.projectName)) {
+    if (!isManagedProjectPath(relativePath, target.projectName, target.kind)) {
       throw new Error(tr("dap.error.unsafe_path", { path: relativePath }));
     }
   }
@@ -377,12 +393,21 @@ export function writePacks(targets: WriteTarget[]): number {
       }
     }
   } catch (error) {
+    // Each rollback step must run even if an earlier one throws, so a single
+    // locked file cannot leave the remaining targets half-restored.
+    const rollbackFailures: string[] = [];
+    const rollbackErrors: unknown[] = [];
     for (const mutation of [...mutations].reverse()) {
       const { fs } = mutation.prepared;
-      if (fs.existsSync(mutation.finalPath)) fs.unlinkSync(mutation.finalPath);
-      if (mutation.backupPath && fs.existsSync(mutation.backupPath)) {
-        fs.mkdirSync(mutation.prepared.path.dirname(mutation.finalPath), { recursive: true });
-        fs.renameSync(mutation.backupPath, mutation.finalPath);
+      try {
+        if (fs.existsSync(mutation.finalPath)) fs.unlinkSync(mutation.finalPath);
+        if (mutation.backupPath && fs.existsSync(mutation.backupPath)) {
+          fs.mkdirSync(mutation.prepared.path.dirname(mutation.finalPath), { recursive: true });
+          fs.renameSync(mutation.backupPath, mutation.finalPath);
+        }
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+        rollbackFailures.push(mutation.finalPath);
       }
     }
     for (const [entry, value] of staged) {
@@ -391,6 +416,10 @@ export function writePacks(targets: WriteTarget[]): number {
       } catch (cleanupError) {
         console.warn("Could not clean failed JSB transaction", cleanupError);
       }
+    }
+    if (rollbackFailures.length) {
+      console.error("JSB transaction rollback could not restore some files", rollbackErrors);
+      throw new Error(`${tr("dap.error.rollback_partial", { paths: rollbackFailures.join("\n") })}\n${error instanceof Error ? error.message : String(error)}`);
     }
     throw error;
   }

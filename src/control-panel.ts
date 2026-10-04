@@ -22,6 +22,7 @@ import {
   setDisplayAnimationEnabled,
 } from "./display-animation-settings";
 import { tr } from "./i18n";
+import { applyFocusHighlight } from "./ui-dom";
 
 let panel: Panel | null = null;
 let slotSelectEl: HTMLSelectElementLike | null = null;
@@ -35,6 +36,10 @@ let slotMonitorTimer: number | null = null;
 let observedSlot = "";
 let observedAnimationUuid = "";
 let observedAnimationList = "";
+// The tick callback fires every rendered frame; only touch the DOM when the
+// transport state actually changes.
+let lastTransportPlaying: boolean | null = null;
+let lastTransportLength = Number.NaN;
 
 const SLOT_LABELS: Record<string, string> = {
   thirdperson_righthand: "dap.slot.thirdperson_righthand",
@@ -61,22 +66,24 @@ function styleInputControl(input: HTMLInputElementLike): void {
   input.style.padding = "4px 7px";
   input.style.boxSizing = "border-box";
   input.style.outline = "none";
-  const focusable = input as unknown as { onfocus: () => void; onblur: () => void };
-  focusable.onfocus = () => { input.style.borderColor = "var(--color-accent)"; };
-  focusable.onblur = () => { input.style.borderColor = "var(--color-border)"; };
+  applyFocusHighlight(input);
 }
 
 function updateControlsUI(time: number, length: number, playing: boolean): void {
   syncDisplayControls();
   if (sliderEl) {
-    sliderEl.max = String(length);
+    if (length !== lastTransportLength) {
+      sliderEl.max = String(length);
+      lastTransportLength = length;
+    }
     sliderEl.value = String(time);
   }
   if (timeLabelEl) {
     timeLabelEl.innerText = `${formatTime(time)} / ${formatTime(length)}`;
   }
-  if (playButtonEl) {
+  if (playButtonEl && playing !== lastTransportPlaying) {
     playButtonEl.innerHTML = `<i class="material-icons">${playing ? "pause" : "play_arrow"}</i>`;
+    lastTransportPlaying = playing;
   }
 }
 
@@ -150,7 +157,7 @@ function buildAnimationPicker(container: HTMLElementLike): void {
 
   const label = document.createElement("span");
   label.innerText = tr("dap.panel.animation");
-  label.style.fontSize = "11px";
+  label.style.fontSize = "inherit";
   label.style.whiteSpace = "nowrap";
 
   const select = document.createElement("select");
@@ -192,7 +199,7 @@ function buildSlotPicker(container: HTMLElementLike): void {
 
   const label = document.createElement("span");
   label.innerText = tr("dap.panel.slot");
-  label.style.fontSize = "11px";
+  label.style.fontSize = "inherit";
   label.style.whiteSpace = "nowrap";
   // Prevent flexbox from truncating the label.
   label.style.flex = "0 0 auto";
@@ -242,7 +249,7 @@ function buildAnimationSwitch(container: HTMLElementLike): void {
 
   const animatedLabel = document.createElement("span");
   animatedLabel.innerText = tr("dap.panel.animate");
-  animatedLabel.style.fontSize = "11px";
+  animatedLabel.style.fontSize = "inherit";
   animatedLabel.style.whiteSpace = "nowrap";
 
   row.appendChild(animated);
@@ -301,7 +308,7 @@ function buildTransportControls(container: HTMLElementLike): void {
   fpsGroup.style.display = "flex";
   fpsGroup.style.alignItems = "center";
   fpsGroup.style.gap = "4px";
-  fpsGroup.style.fontSize = "11px";
+  fpsGroup.style.fontSize = "inherit";
   fpsGroup.style.whiteSpace = "nowrap";
   fpsGroup.style.flex = "1 1 118px";
   fpsGroup.innerText = tr("dap.panel.preview_fps");
@@ -344,7 +351,7 @@ function buildTransportControls(container: HTMLElementLike): void {
   sliderEl = slider;
 
   const timeLabel = document.createElement("span");
-  timeLabel.style.fontSize = "11px";
+  timeLabel.style.fontSize = "inherit";
   timeLabel.style.textAlign = "right";
   timeLabel.style.whiteSpace = "nowrap";
   timeLabel.style.flex = "0 0 auto";
@@ -365,6 +372,7 @@ export function openControlPanel(): void {
   setTickCallback(updateControlsUI);
 
   if (panel) {
+    panel.fold(false);
     const animation = selectAnimationAndReset();
     syncDisplayControls(true);
     startSlotMonitor();
@@ -393,6 +401,7 @@ export function openControlPanel(): void {
     default_position: { slot: "left_bar", height: 205, width: 340 },
   });
   panel.node.appendChild(wrapper);
+  panel.fold(false);
 
   const animation = selectAnimationAndReset();
   syncDisplayControls(true);
@@ -420,4 +429,6 @@ export function disposeControlPanel(): void {
   observedSlot = "";
   observedAnimationUuid = "";
   observedAnimationList = "";
+  lastTransportPlaying = null;
+  lastTransportLength = Number.NaN;
 }

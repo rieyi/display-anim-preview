@@ -1,7 +1,7 @@
 /** Lightweight sidebar-paged project settings window for export configuration. */
 
 import { animationKeyFromName, findAnimationKeyConflicts } from "./animation-export-plan";
-import { detectionStatus } from "./bounds-cache";
+import { detectionStatus, modelBoundsFingerprint } from "./bounds-cache";
 import {
   initialExportSettings,
   rememberExportSettingsDraft,
@@ -10,20 +10,16 @@ import {
 } from "./export-animation-settings";
 import { EXPORT_NAMESPACE, isSafeProjectName, isValidObjectiveName, isValidPlayingTag } from "./export-layout";
 import { tr } from "./i18n";
+import { deleteHandRig, ensureHandRig, setHandRigVisibility } from "./hand-rig";
 import { VANILLA_ITEM_IDS } from "./vanilla-items";
+import { applyFocusHighlight, el } from "./ui-dom";
 
 let overlay: HTMLElementLike | null = null;
-
-function el(tag: string, text = ""): HTMLElementLike {
-  const node = document.createElement(tag);
-  if (text) node.innerText = text;
-  return node;
-}
 
 function fieldLabel(text: string): HTMLElementLike {
   const label = el("label", text);
   label.style.display = "block";
-  label.style.fontSize = "12px";
+  label.style.fontSize = "inherit";
   label.style.marginBottom = "5px";
   label.style.color = "var(--color-text)";
   return label;
@@ -44,16 +40,14 @@ function styleControl(control: HTMLElementLike): void {
   control.style.border = "1px solid var(--color-border)";
   control.style.borderRadius = "0";
   control.style.outline = "none";
-  const focusable = control as unknown as { onfocus: () => void; onblur: () => void };
-  focusable.onfocus = () => { control.style.borderColor = "var(--color-accent)"; };
-  focusable.onblur = () => { control.style.borderColor = "var(--color-border)"; };
+  applyFocusHighlight(control);
 }
 
 type Validation = { state: "valid" | "warning" | "error" | "empty"; message: string };
 
 function validationLine(): HTMLElementLike {
   const line = el("div");
-  line.style.fontSize = "11px";
+  line.style.fontSize = "inherit";
   line.style.marginTop = "5px";
   line.style.minHeight = "16px";
   return line;
@@ -145,7 +139,8 @@ function selectField<T extends string>(
   label: string,
   value: T,
   options: Array<[T, string]>,
-  change: (value: T) => void
+  change: (value: T) => void,
+  disabled = false
 ): void {
   const wrap = fieldWrap();
   wrap.appendChild(fieldLabel(label));
@@ -159,6 +154,8 @@ function selectField<T extends string>(
     select.appendChild(option);
   }
   select.value = value;
+  select.disabled = disabled;
+  if (disabled) select.style.opacity = "0.65";
   select.onchange = (event) => change(event.target.value as T);
   wrap.appendChild(select);
   parent.appendChild(wrap);
@@ -187,7 +184,7 @@ function checkboxField(parent: HTMLElementLike, label: string, help: string, che
   hint.style.marginLeft = "7px";
   hint.style.border = "1px solid var(--color-subtle_text)";
   hint.style.borderRadius = "50%";
-  hint.style.fontSize = "11px";
+  hint.style.fontSize = "inherit";
   hint.style.color = "var(--color-subtle_text)";
   hint.style.padding = "0";
   hint.style.cursor = "pointer";
@@ -198,7 +195,7 @@ function checkboxField(parent: HTMLElementLike, label: string, help: string, che
   helpBox.style.background = "var(--color-back)";
   helpBox.style.borderLeft = "3px solid var(--color-accent)";
   helpBox.style.color = "var(--color-subtle_text)";
-  helpBox.style.fontSize = "12px";
+  helpBox.style.fontSize = "inherit";
   hint.onclick = () => {
     helpBox.style.display = helpBox.style.display === "none" ? "block" : "none";
   };
@@ -260,7 +257,7 @@ function copyableCode(parent: HTMLElementLike, title: string, description: strin
   const note = el("div", description);
   note.style.marginBottom = "7px";
   note.style.color = "var(--color-subtle_text)";
-  note.style.fontSize = "12px";
+  note.style.fontSize = "inherit";
   wrap.appendChild(note);
   const row = el("div");
   row.style.display = "flex";
@@ -348,6 +345,33 @@ export function openProjectSettingsDialog(): void {
     #dap-project-settings-shell .dap-sidebar-button:focus * {
       color: inherit !important;
     }
+    #dap-project-settings-shell .dap-hand-card {
+      border: 1px solid var(--color-border);
+      background: var(--color-back);
+      padding: 16px;
+    }
+    #dap-project-settings-shell .dap-hand-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 14px;
+      margin-top: 14px;
+    }
+    #dap-project-settings-shell .dap-hand-grid > div {
+      margin-bottom: 0 !important;
+    }
+    #dap-project-settings-shell .dap-hand-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding-top: 14px;
+      margin-top: 14px;
+      border-top: 1px solid var(--color-border);
+    }
+    #dap-project-settings-shell .dap-hand-actions button {
+      height: 34px;
+      padding: 0 12px;
+      margin: 0;
+    }
   `;
   shell.appendChild(scopedStyle);
 
@@ -375,15 +399,81 @@ export function openProjectSettingsDialog(): void {
   body.appendChild(content);
   shell.appendChild(body);
 
+  const renderHands = () => {
+    pageTitle(content, tr("dap.settings.page.hands"), tr("dap.settings.hands_desc"));
+    checkboxField(
+      content,
+      tr("dap.settings.hand_rendering"),
+      tr("dap.settings.hand_rendering_help"),
+      settings.handRenderingEnabled,
+      (value) => {
+        settings.handRenderingEnabled = value;
+        if (value) ensureHandRig(settings);
+        else setHandRigVisibility(settings);
+        persist();
+        content.innerHTML = "";
+        renderHands();
+      }
+    );
+    const versionNotice = el("div", tr("dap.hand.skin_version_help"));
+    versionNotice.className = "dap-hand-version-notice";
+    versionNotice.style.cssText = "margin:12px 0;padding:12px;border:1px solid var(--color-warning);border-radius:6px;";
+    content.appendChild(versionNotice);
+    if (!settings.handRenderingEnabled) return;
+
+    const shaderNotice = el("div");
+    shaderNotice.className = "dap-hand-shader-notice";
+    shaderNotice.style.cssText = "margin:12px 0;padding:12px;border:1px solid var(--color-warning);border-radius:6px;";
+    const shaderBadge = el("strong", tr("dap.hand.shader_incompatible"));
+    shaderBadge.style.color = "var(--color-warning)";
+    shaderNotice.appendChild(shaderBadge);
+    shaderNotice.appendChild(el("p", tr("dap.hand.shader_incompatible_help")));
+    content.appendChild(shaderNotice);
+
+    const actions = el("div");
+    actions.className = "dap-hand-actions";
+    const actionButton = (label: string, click: () => void, danger = false) => {
+      const button = el("button", label);
+      if (danger) {
+        button.style.color = "#e25d68";
+        button.style.marginLeft = "auto";
+      }
+      button.onclick = click;
+      actions.appendChild(button);
+    };
+    actionButton(tr("dap.hand.delete"), () => {
+      Blockbench.showMessageBox({
+        title: tr("dap.hand.delete_title"), message: tr("dap.hand.delete_message"), icon: "warning",
+        buttons: [tr("dap.export.cancel"), tr("dap.hand.delete_confirm")], confirmIndex: 1, cancelIndex: 0,
+      }, (button) => {
+        if (button !== 1) return;
+        deleteHandRig(settings);
+        settings.handRenderingEnabled = false;
+        persist();
+        content.innerHTML = "";
+        renderHands();
+      });
+    }, true);
+    content.appendChild(actions);
+  };
+
   const pages: Array<[string, string, () => void]> = [
-    ["settings", tr("dap.settings.page.general"), () => {
+    ["settings", tr("dap.settings.page.general"), function renderGeneral() {
       pageTitle(content, tr("dap.settings.page.general"), tr("dap.settings.general_desc"));
       textField(content, tr("dap.export.pack_name"), settings.packName, (v) => { settings.packName = v; persist(); }, identifierValidation);
       textField(content, tr("dap.export.project_name"), settings.projectName, (v) => { settings.projectName = v; persist(); }, identifierValidation);
-      selectField(content, tr("dap.export.base_item"), settings.baseItem, VANILLA_ITEM_IDS.map((id) => [`minecraft:${id}`, `minecraft:${id}`]), (v) => { settings.baseItem = v; persist(); });
+      selectField(
+        content,
+        tr("dap.export.base_item"),
+        settings.handRenderingEnabled ? "minecraft:player_head" : settings.baseItem,
+        VANILLA_ITEM_IDS.map((id) => [`minecraft:${id}`, `minecraft:${id}`]),
+        (v) => { settings.baseItem = v; persist(); },
+        settings.handRenderingEnabled
+      );
       textField(content, tr("dap.export.display_name"), settings.displayName, (v) => { settings.displayName = v; persist(); });
       checkboxField(content, tr("dap.settings.developer_tips"), tr("dap.settings.developer_tips_help"), settings.debugEnabled === true, (v) => { settings.debugEnabled = v; persist(); });
     }],
+    ["pan_tool", tr("dap.settings.page.hands"), renderHands],
     ["animation", tr("dap.settings.page.animations"), function renderAnimations() {
       pageTitle(content, tr("dap.settings.page.animations"), tr("dap.settings.animations_desc"));
       const selectedAnimations = animations.filter((animation) => settings.selectedAnimationUuids.includes(animation.uuid));
@@ -403,6 +493,9 @@ export function openProjectSettingsDialog(): void {
         settings.exactBoundsOnExport,
         (value) => { settings.exactBoundsOnExport = value; persist(); }
       );
+      // One model fingerprint is shared by every status badge on this page;
+      // recomputing it per animation rescans the whole model each time.
+      const modelFingerprint = modelBoundsFingerprint();
       for (const animation of animations) {
         const row = fieldWrap();
         row.style.padding = "10px";
@@ -423,14 +516,14 @@ export function openProjectSettingsDialog(): void {
         const label = el("span", ` ${animation.name}  →  ${animationKeyFromName(animation.name) || tr("dap.export.invalid_key")}`);
         label.style.flex = "1";
         row.appendChild(label);
-        const status = detectionStatus(Project as unknown as object, animation);
+        const status = detectionStatus(Project as unknown as object, animation, modelFingerprint);
         const statusKey = status.exact
           ? (status.exact.hits.length ? "dap.bounds.status.exact_failed" : "dap.bounds.status.exact_passed")
           : status.quick
             ? (status.quick.hits.length ? "dap.bounds.status.quick_failed" : "dap.bounds.status.quick_passed")
             : status.stale ? "dap.bounds.status.stale" : "dap.bounds.status.unchecked";
         const badge = el("span", tr(statusKey));
-        badge.style.fontSize = "11px";
+        badge.style.fontSize = "inherit";
         badge.style.color = status.exact || status.quick ? "var(--color-accent)" : "var(--color-subtle_text)";
         row.style.display = "flex";
         row.style.alignItems = "center";

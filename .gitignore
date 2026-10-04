@@ -1,6 +1,3 @@
 node_modules/
-/dist/
+dist/
 .DS_Store
-*.log
-/RELEASE_UPLOAD_ONLY_*/
-/docs

@@ -1,7 +1,38 @@
 # Java Display Animator — Usage
 
-Full walkthrough for Java Display Animator 1.1.0. See the [overview](../README.md),
+Plugin commands are grouped under **Tools → Java Display Animator**: Project Settings, display preview, first-person preview, bounds checks and pack export. The first-person command is available in Animate mode. **File → Export** and command search remain available.
+
+
+Full walkthrough for Java Display Animator 1.1.2. See the [overview](../README.md),
 [Chinese guide](USAGE.zh-CN.md), or [troubleshooting](TROUBLESHOOTING.md).
+
+## Authoring panels
+
+### Plugin feature management panel
+
+Open **Tools → Java Display Animator → Java Display Animator Project Settings** to manage the project in one sidebar window. Its six pages cover General, Player Arms, Animations, Pack Files, Datapack, and Developer API. Set the item and project names, select animation tracks and the default animation, choose 1–20 FPS, configure pack output, and review the generated command examples.
+
+Edits update the current project's settings immediately. Save the `.bbmodel` to retain them on disk; closing the panel does not save the model automatically. The Tools submenu also groups display preview, first-person preview, bounds checks, and export.
+
+![Project settings panel with six feature pages](../assets/project-settings-panel.png)
+
+The supplied screenshot uses Blockbench's Simplified Chinese interface. The same pages are available in English.
+
+### First-person animation preview while authoring
+
+In **Animate** mode, the dockable **First-person Animation Preview** shows the item from the first-person left- or right-hand view while the main viewport remains available for modeling and bone selection. It follows the official timeline during playback and scrubbing. Switch hands in the preview without moving the main editor camera or creating another timeline.
+
+Use the timeline eye button, **Animation → Open First-person Preview**, or the plugin's Tools submenu to reopen the panel. New Java Display Animation projects also open the separate **Display Animation Preview** controls automatically; each display context keeps its own animation switch.
+
+![Animation editor with first-person preview and editable player-arm placeholders](../assets/first-person-preview-player-arms.png)
+
+This editor screenshot shows arm placeholders and the preview composition. It is not an in-game skin-rendering example.
+
+### Optional player-skin arms
+
+In **Project Settings → Player Arms**, enable player-skin arms to create editable left/right arm bindings. Animate their position and rotation alongside the item, and preview the poses while authoring. The exporter includes the arms in first-person views, and the generated give command supplies the player's skin profile in Minecraft. Other display contexts retain the item without added arms.
+
+**Player-skin arms currently require Minecraft Java 1.21.11 or newer.** Keep shader packs disabled; arm scale keyframes are unsupported. The current exporter targets Minecraft Java 26.2, so the arm feature's minimum version does not imply that the generated packs load unchanged on every version above 1.21.11. Check both hands and the skin appearance in Minecraft after editing the rig.
 
 ## Steps
 
@@ -63,7 +94,7 @@ Run **Check Animation Model Bounds** from the Command Palette, then choose Quick
 Isolated Check. Quick mode avoids Undo and is intended for fast authoring feedback. Exact mode clones
 the project into a disposable in-memory project and validates final Java models, whose coordinates must
 remain between `-16` and `32`. Both modes show cancellable progress and reuse unchanged per-animation
-results during the current Blockbench session.
+results during the current Blockbench session. Closing the mode chooser or pressing Escape cancels without starting a scan.
 The multi-animation export report identifies every out-of-range frame with the animation's original
 name, generated key, and local frame. Inspect it in Minecraft with
 `frame/<key> {frame:<frame>}` before reducing the affected motion in Blockbench.
@@ -71,7 +102,7 @@ name, generated key, and local frame. Inspect it in Minecraft with
 ### 6. Export the resource pack and datapack
 
 1. Run **Java Display Animator Project Settings** from the Command Palette. The sidebar pages
-   configure general information, animations, pack locations, datapack settings, and developer APIs.
+   configure General, Player Arms, Animations, Pack Files, Datapack, and Developer API.
 2. On the **Animations** page, select the animations to export and review the generated Minecraft
    keys. **Select All** and **Select None** are available. For example, `TPS Reload` becomes `tps_reload`.
 3. Select at least one animation. An empty key, `.` or `..`, or a key collision after sanitization
@@ -89,16 +120,16 @@ name, generated key, and local frame. Inspect it in Minecraft with
    unpacked pack containing a valid `pack.mcmeta`, which is preserved.
 8. The animation page can enable or disable **Run exact bounds check before export**. Resource models
    are isolated in a disposable project either way; disabling it suppresses range warnings and status.
-9. Close Project Settings and run **Export Resource Pack and Datapack**. The exporter reads the
+9. Close Project Settings and choose **File → Export → Export Resource Pack and Datapack**. The exporter reads the
    saved settings instead of asking you to select animations again. If frame-rate, texture-resolution,
    or enabled model-bounds issues exist, the plugin combines every
    warning into one dialog. Files are generated only after **Export Anyway** is selected. Cancelling
    or closing the dialog writes nothing and displays an explicit cancellation message.
 
-Open **Java Display Animator Project Settings** to edit general, animation, pack-file, datapack, and
-developer-API pages while authoring. The first project state initially selects only Blockbench's
+Open **Java Display Animator Project Settings** to edit General, Player Arms, Animations, Pack Files, Datapack, and
+Developer API pages while authoring. The first project state initially selects only Blockbench's
 current animation. Changes are written immediately to the `.bbmodel` `display_anim_export_settings`
-v6 property and mark the project as unsaved, but never save or overwrite it automatically. Resource
+v7 property and mark the project as unsaved, but never save or overwrite it automatically. Resource
 pack and datapack folders are remembered independently; an empty field asks during export.
 A datapack-only export must be paired with a resource pack generated from the same animation-key and
 frame-count mapping.
@@ -167,7 +198,7 @@ For dynamic map functions, use the macro API:
 Replace `reload` and `fire` with keys shown in the Export Complete dialog. `mode` accepts only
 `once` or `loop`. `give` and `stop` restore frame 0 of the default animation. `once` also restores
 the default after showing its last frame for one game tick. `frame` stops automatic playback and
-clamps the requested frame to the selected animation's valid range. Version 1.1.0 no longer generates
+clamps the requested frame to the selected animation's valid range. Version 1.1.2 no longer generates
 `play_loop`, `play_once`, `next`, `prev`, or `reset`.
 
 Check GUI, first person, third person, ground, head, and item-frame views. Only display contexts whose
@@ -177,5 +208,11 @@ manual frame selection with at least two animations of different lengths.
 ## Version compatibility
 
 In principle, item-model mapping makes the approach applicable to other Minecraft Java versions.
-Minecraft Java 26.2 is the tested stable target; 1.1.0 emits its resource-pack and datapack formats.
+Minecraft Java 26.2 is the tested stable target; 1.1.2 emits its resource-pack and datapack formats.
 Using another version may require adapting metadata, routing, components, and commands.
+
+## Player-arm export details
+
+Project Settings → Player Arms enables the player-skin arm exporter. Create bindings or adopt compatible `lefthand` / `righthand` groups; animate their position and rotation. Scale keyframes are rejected because arm identification uses fixed scale markers. Keep shader packs disabled. First-person exports combine the item model with player-head special models and generated core shaders; the give command fills the executing player's skin profile. Other display contexts do not receive these arms. Recheck both arm poses and texture appearance in Minecraft after any rig change.
+
+Internal animation and export object properties remain stored in the `.bbmodel` but are hidden from Blockbench's native File → Project form. Edit them through the plugin's Project Settings and preview panel.

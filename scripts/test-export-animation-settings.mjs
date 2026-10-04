@@ -1,4 +1,4 @@
-import { build } from "esbuild";
+import { importTestBundle } from "./lib/test-bundle.mjs";
 import { fileURLToPath } from "node:url";
 
 const modulePath = fileURLToPath(new URL("../src/export-animation-settings.ts", import.meta.url));
@@ -16,7 +16,8 @@ const entry = `
   delete Project.display_anim_export_settings;
   Animation.selected = b;
   let value = initialExportSettings(animations);
-  assert(value.version === 6 && value.selectedAnimationUuids.join() === "b", "new project selection is wrong");
+  assert(value.version === 7 && value.selectedAnimationUuids.join() === "b", "new project selection is wrong");
+  assert(value.handRenderingEnabled === false, "hand rendering should default to disabled");
   assert(value.animationFps === 20, "new projects should default to Minecraft's 20 FPS limit");
   assert(value.exactBoundsOnExport === true, "exact export bounds check should default to enabled");
   assert(value.defaultAnimationUuid === "b", "new project default is wrong");
@@ -54,8 +55,15 @@ const entry = `
     ...Project.display_anim_export_settings, version: 5, heldItemBehavior: "resume"
   };
   value = initialExportSettings(animations);
-  assert(value.version === 6 && !("heldItemBehavior" in value) && value.animationFps === 20,
-    "v5 test settings were not normalized to v6");
+  assert(value.version === 7 && !("heldItemBehavior" in value) && value.animationFps === 20,
+    "v5 test settings were not normalized to v7");
+
+  Project.display_anim_export_settings = {
+    ...Project.display_anim_export_settings, version: 6, handRenderingEnabled: undefined
+  };
+  value = initialExportSettings(animations);
+  assert(value.version === 7 && value.handRenderingEnabled === false,
+    "v6 settings did not migrate with hand rendering disabled");
 
   Project.display_anim_export_settings = { ...Project.display_anim_export_settings, selectedAnimationUuids: ["deleted"], defaultAnimationUuid: "deleted" };
   value = initialExportSettings(animations);
@@ -68,23 +76,23 @@ const entry = `
     selectedAnimationUuids: chosen, defaultAnimationUuid: "c", packName: "map_pack", projectName: "resin_gun",
     outputMode: "both_separate", writeMode: "insert", baseItem: "minecraft:stick", displayName: "Test Gun",
     frameObjective: "frame", modeObjective: "mode", maxFrameObjective: "max", playingTag: "playing",
-    debugEnabled: true, exactBoundsOnExport: false, animationFps: 12,
+    debugEnabled: true, handRenderingEnabled: true, handRigRootUuid: "root", handLeftGroupUuid: "left",
+    handRightGroupUuid: "right", handPreviewTextureUuid: "skin",
+    exactBoundsOnExport: false, animationFps: 12,
     sharedRoot: "/maps", resourcePackFolder: "/resource", datapackFolder: "/data"
   });
   chosen.push("b");
   const stored = Project.display_anim_export_settings;
-  assert(Project.saved === false && stored.version === 6, "successful memory did not dirty project/write v6");
+  assert(Project.saved === false && stored.version === 7, "successful memory did not dirty project/write v7");
   assert(stored.selectedAnimationUuids.join() === "a,c", "stored UUID list was not cloned");
   assert(stored.projectName === "resin_gun" && stored.writeMode === "insert", "complete settings were not remembered");
   assert(stored.debugEnabled === true, "developer tips selection was not remembered");
+  assert(stored.handRenderingEnabled === true, "hand rendering selection was not remembered");
+  assert(stored.version === 7 && stored.handLeftGroupUuid === "left" && stored.handSkinModel === undefined && stored.handSleevesVisible === undefined,
+    "v7 hand binding settings were not remembered");
   assert(stored.exactBoundsOnExport === false, "exact bounds export selection was not remembered");
   assert(stored.animationFps === 12, "animation FPS was not remembered");
   process.stdout.write(JSON.stringify(stored));
 `;
 
-const output = await build({
-  stdin: { contents: entry, resolveDir: process.cwd(), sourcefile: "settings-test.ts", loader: "ts" },
-  bundle: true, write: false, platform: "node", format: "esm", target: "node20",
-  define: { __DAP_FORCE_LANGUAGE__: "null" },
-});
-await import(`data:text/javascript;base64,${Buffer.from(output.outputFiles[0].contents).toString("base64")}`);
+await importTestBundle(entry, { sourcefile: "settings-test.ts", define: { __DAP_FORCE_LANGUAGE__: "null" } });

@@ -1,23 +1,28 @@
 # Java Display Animator
 
-[简体中文 · Java 逐帧显示动画](README.zh-CN.md)
+[简体中文 · Java 帧物品动画](README.zh-CN.md)
 
 Java Display Animator is a Blockbench plugin for creating, previewing, and exporting frame-baked
-Minecraft Java item animations in the Desktop app. Configure animation playback per display
-context, then export a resource pack and datapack together. Make first-person hand-held item
-animations while keeping third-person views or GUI inventory icons still.
+Minecraft Java item animations in the Desktop app. Configure animation playback independently for
+first-person, third-person, GUI, and other display contexts, then export a resource pack and datapack together.
+
+When making first-person hand-held item animations, you can animate the held item while keeping
+third-person views or inventory icons still. These animations control the held item model itself.
 
 <p align="center">
   <img src="assets/icon.png" alt="Java Display Animator" width="96">
 </p>
 
-**Current stable release: 1.1.0.** Blockbench Desktop 5.1.5+ is required. Minecraft Java 26.2 is the
-version tested during plugin development. Node.js 20+ is needed only to build from source.
+**Version: 1.1.2.** Requires Blockbench Desktop 5.1.5+. Minecraft Java 26.2 is the version tested
+during plugin development. Node.js 20+ is needed only to build from source.
 
 ![Version](https://img.shields.io/github/v/release/rieyi/display-anim-preview?label=Version&color=2ea44f)
 ![Blockbench](https://img.shields.io/badge/Blockbench-5.1.5%2B-3b82f6)
 ![Minecraft](https://img.shields.io/badge/Minecraft_Java-26.2_tested-62b47a)
 ![Node](https://img.shields.io/badge/Node-20%2B_build_only-e76f00)
+
+See the [changelog](CHANGELOG.md) for update details. Plugin commands are grouped under
+**Tools → Java Display Animator**. Pack export is also available under **File → Export**.
 
 ## Download
 
@@ -25,13 +30,10 @@ version tested during plugin development. Node.js 20+ is needed only to build fr
 
 | Package | Language behavior |
 |---|---|
-| [Universal 1.1.0](https://github.com/rieyi/display-anim-preview/releases/download/v1.1.0/java-display-animator-v1.1.0-universal.zip) | English base interface; follows Blockbench's Simplified Chinese language setting |
-| [Simplified Chinese 1.1.0](https://github.com/rieyi/display-anim-preview/releases/download/v1.1.0/java-display-animator-v1.1.0-zh-CN.zip) | Always uses Simplified Chinese |
+| [Universal 1.1.2](https://github.com/rieyi/display-anim-preview/releases/download/v1.1.2/java-display-animator-v1.1.2-universal.zip) | English base interface; follows Blockbench's Simplified Chinese language setting |
+| [Simplified Chinese 1.1.2](https://github.com/rieyi/display-anim-preview/releases/download/v1.1.2/java-display-animator-v1.1.2-zh-CN.zip) | Always uses Simplified Chinese |
 
-Both packages provide the same features and share the `display_anim_preview` plugin ID. Install
-only one. Verify downloads with [SHA256SUMS.txt](https://github.com/rieyi/display-anim-preview/releases/download/v1.1.0/SHA256SUMS.txt).
-The [official plugin-store submission](https://github.com/JannisX11/blockbench-plugins/pull/968)
-is still under review; use GitHub Releases to install the plugin.
+Both packages provide the same features and share the `display_anim_preview` plugin ID. Install only one.
 
 ## Demos
 
@@ -42,7 +44,7 @@ is still under review; use GitHub Releases to install the plugin.
 </p>
 
 <p align="center">
-  <img src="assets/blockbench-preview.gif" alt="Animated Blockbench display-context preview" width="48%" />
+  <img src="assets/blockbench-preview.gif" alt="Animated Blockbench display-context item preview" width="48%" />
   &nbsp;
   <img src="assets/minecraft-result.gif" alt="Animated Minecraft Java in-game item result" width="48%" />
 </p>
@@ -54,92 +56,102 @@ is still under review; use GitHub Releases to install the plugin.
 Open the full videos: [Blockbench preview](assets/blockbench-preview.mp4) ·
 [Minecraft in-game result](assets/minecraft-result.mp4).
 
+## Feature management, first-person animation preview, and player-skin arms
+
+### Plugin feature management panel
+
+Open **Tools → Java Display Animator → Java Display Animator Project Settings** to access a sidebar
+window with six pages: General, Player Arms, Animations, Pack Files, Datapack, and Developer API.
+Set item and project names, select animations and the default display, configure output locations,
+and review generated command examples.
+
+Changes update the current project's settings immediately. Save the `.bbmodel` to retain them on disk;
+closing the panel does not save the model automatically.
+
+<img src="assets/project-settings-panel.png" alt="Project settings panel with six feature pages" style="zoom: 33%;" />
+
+### First-person preview while making animations
+
+In **Animate** mode, the sidebar **First-person Animation Preview** shows the item's left- or right-hand
+first-person view, making it easier to check the result while authoring an animation.
+
+![Animation editor with first-person preview and editable player-arm placeholders](assets/first-person-preview-player-arms.png)
+
+This image shows editor arm placeholders and the preview composition, rather than Minecraft's final skin rendering.
+
+### Player-skin arms
+
+Enable skin arms under **Project Settings → Player Arms** to create editable left/right arm bindings.
+Animate their position and rotation alongside the item and preview their poses while authoring.
+
+**Player-skin arms currently require Minecraft Java 1.21.11 or newer.** This feature relies on vanilla
+core shaders and is incompatible with shader packs.
+
 ## Features
 
-- **Preview while authoring.** Preview item animations in Edit, Paint, Animate, and Display modes,
-  sharing play, pause, loop, and time with Blockbench's official timeline.
-- **Control each display context.** Set independent animation switches for first-person,
-  third-person, GUI, ground, head, item frame, and other supported contexts. Disabled contexts
-  stay on frame 0; for example, animate a hand-held item while keeping its inventory icon still.
-- **Export a resource pack and datapack together.** Generate model resources and their animation
-  driver for Minecraft Java 26.2, with resource-only and datapack-only export choices as well.
-- **Use multiple animations and commands.** Select animation tracks and one default animation;
-  use short `play`, `loop`, `stop`, and `frame` entries or the dynamic `play` / `frame` macro APIs.
-- **Choose 1–20 FPS with model-frame deduplication.** One project rate controls preview, baking,
-  bounds checks, and playback. Identical model frames are deduplicated across animations to reduce
-  repeated model files.
-- **Check before export.** Check model bounds, project/texture resolution mismatches, missing
-  texture references, and particle textures before writing packs.
-- **Integrate into existing packs.** Create new packs or insert a manifest-managed project into
-  existing unpacked packs. Reinsertion updates project-owned files, blocks unmanaged path
-  conflicts, and rolls back failed writes.
-- **Keep item state independent and preview compatible projects.** Each unstackable generated
-  item stores its own playback state. An already open `java_block_sequence` project can also be
-  previewed and exported without taking ownership of the other plugin's format.
+- **First-person preview:** Preview first-person item animations in Animate mode.
+- **Player arms:** Create animated arms that display the player's skin. Skin arms rely on vanilla core shaders and are incompatible with shader packs.
+- **Playback while authoring:** Play item animations in Edit, Paint, Animate, and Display modes,
+  sharing playback, pause, loop, and time with Blockbench's official timeline.
+- **Independent display animation switches:** Save animation switches separately for first-person,
+  third-person, GUI, ground, head, item frame, and other display contexts. Disabled contexts remain on
+  frame 0; for example, animate the first-person item while keeping its inventory icon still.
+- **Resource-pack and datapack export:** Generate model resources and the matching animation driver
+  together, or export only the resource pack or datapack.
+- **Multiple animations and commands:** Select animation tracks and a default animation. Use short
+  `play`, `loop`, `stop`, and `frame` commands, or select animations dynamically through the `play` / `frame` macro APIs.
+- **1–20 FPS and model-frame deduplication:** A project frame rate controls preview, baking, bounds
+  checks, and Minecraft playback. Deduplicate identical model frames across animations to reduce repeated files.
+- **Pre-export checks:** Check model bounds, project/texture resolution, missing texture references,
+  and particle textures.
+- **Safe insertion into existing packs:** Create new packs or insert a project into existing unpacked
+  packs. Manifests track generated project files; reinsertion updates managed files, blocks unmanaged
+  path conflicts, and rolls back failed writes.
+- **Independent item progress:** Each unstackable generated item keeps its own animation progress.
+- **Project compatibility:** Preview and export already-open `java_block_sequence` projects, supporting
+  compatible project formats from other plugins.
 
-The resource pack uses `display_context` to choose the view, then `custom_model_data.strings[0]`
-to choose an animation and `custom_model_data.floats[0]` to choose its local frame. The fixed `jsb`
-namespace provides the matching commands. See the [complete usage guide](doc/USAGE.md).
-Compatibility with `java_block_sequence` relies on an available Java model compiler in Blockbench;
+The resource pack uses `display_context` to select the display view, `custom_model_data.strings[0]`
+to select an animation, and `custom_model_data.floats[0]` to select that animation's local frame.
+Matching commands use the fixed `jsb` namespace. See the [complete usage guide](doc/USAGE.md).
+Compatibility with `java_block_sequence` depends on an available Java model compiler in Blockbench;
 the removed legacy model-sequence ZIP exporter is not provided.
 
 ## Install and quick start
 
-1. Download one ZIP above and extract it; do not load the ZIP itself as a plugin.
-2. In **Blockbench → File → Plugins → Load Plugin from File**, select `display_anim_preview.js`.
-3. Confirm **Java Display Animator 1.1.0** is installed.
-4. Create **File → New → Java Display Animation**, model and texture the item, then animate its
-   groups in **Animate**.
-5. In **Display**, adjust transforms. Run **Open Display Animation Preview** from the Command
-   Palette and toggle which display contexts animate.
-6. Run **Java Display Animator Project Settings**, select animations, a default animation,
-   project FPS, and pack settings; then run **Export Resource Pack and Datapack**.
-7. Enable the resource pack and install the datapack in Minecraft Java 26.2. Use the commands shown
-   in the Export Complete dialog, starting with `/function jsb:<project>/give`.
+- Search for **Java Display Animator** in Blockbench's official plugin browser.
+- Alternatively, download the appropriate build from this repository's Releases.
 
-## Guides
+1. Download one ZIP and extract it; do not load the ZIP itself as a plugin.
+2. In **Blockbench → File → Plugins → Load Plugin from File**, select `display_anim_preview.js`.
+3. Confirm **Java Display Animator** is installed. The fixed Simplified Chinese build is named **Java 逐帧显示动画**.
+4. Create **File → New → Java Display Animation**, build and texture the item, and animate its groups in **Animate** mode.
+5. Configure transforms in **Display** mode, then run **Open Display Animation Preview** from the Command Palette to set each display context's animation switch.
+6. Open **Java Display Animator Project Settings** to configure animations, output locations, and other settings, then run **Export Resource Pack and Datapack**.
+7. Enable the resource pack and install the datapack in Minecraft Java. Use the commands shown after export, starting with `/function jsb:<project>/give` to obtain the item.
+
+## Guides and troubleshooting
 
 - [Complete usage guide](doc/USAGE.md) · [Chinese guide](doc/USAGE.zh-CN.md)
 - [Troubleshooting](doc/TROUBLESHOOTING.md) · [Chinese troubleshooting](doc/TROUBLESHOOTING.zh-CN.md)
 
 ## Version compatibility and limitations
 
-In principle, the approach can support Minecraft Java versions that provide item-model mapping.
-**Minecraft Java 26.2 is the version tested during plugin development and confirmed as the stable
-support target.** Version 1.1.0 generates packs targeting 26.2; other versions may require adapting
-pack metadata, item-model routing, components, and datapack commands. The theoretical compatibility
-does not mean the exported packs load unchanged on every version.
+In principle, this approach can support Minecraft Java versions that provide item-model mapping.
+**Minecraft Java 26.2 is the version tested during plugin development and confirmed as a stable support target.**
 
-Java model bounds still apply. Preview-only colors do not replace assigned textures. A datapack-only
-export needs a matching resource pack with the same animation keys and frame mapping. This release
-animates item models; it does not add animated player-skin arms.
+Java model bounds still apply. Editor preview colors do not replace assigned textures. A datapack-only
+export needs a matching resource pack with the same animation keys and frame mapping. Optional player-skin
+arm animations rely on vanilla core shaders, are incompatible with shader packs, and do not support arm scaling.
 
-## Build from source
+## Credits and contributing
 
-```bash
-npm ci
-npm test
-npm run typecheck
-npm run build:release
-npm run build:official
-```
+- Animation models provided by [镇川](https://space.bilibili.com/10016652?spm_id_from=333.337.0.0).
+- Thanks to [毛豆](https://github.com/Sweda666) and [镇川](https://space.bilibili.com/10016652?spm_id_from=333.337.0.0) for testing and improvement suggestions.
 
-| Build artifact | Purpose |
-|---|---|
-| `dist/display_anim_preview.js` | Universal build |
-| `dist/display_anim_preview.zh-CN.js` | Fixed Simplified Chinese build |
-| `dist/display_anim_preview.official.js` | Official repository build; About comes from `about.md` |
-
-The Chinese Release ZIP names its plugin file `display_anim_preview.js`, because Blockbench requires
-the loaded filename to match the plugin ID. The official build is also distributed under that name
-in the official repository. Node.js is not required to install a Release ZIP.
-
-## Contributing
-
-Read the [contribution guidelines](CONTRIBUTING.md) before making substantial changes or submitting
+Read the [contribution guidelines](CONTRIBUTING.md) before starting substantial changes or submitting
 a Pull Request. Contributions use the controlled Fork + PR workflow.
 
 ## Copyright
 
 Copyright © 2026 rieyi. All rights reserved. See [COPYRIGHT.md](COPYRIGHT.md).
-This repository is publicly viewable but does not grant an open-source license.
